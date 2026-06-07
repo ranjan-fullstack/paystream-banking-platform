@@ -1,0 +1,40 @@
+name: CI — Build & Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build & run tests (product-service)
+        working-directory: backend
+        run: mvn -pl product-service -am clean verify -Dspring.profiles.active=test
+
+      - name: Build Docker image (no push on PR)
+        if: github.event_name == 'pull_request'
+        working-directory: backend/product-service
+        run: |
+          mvn package -DskipTests
+          docker build -t product-service:${{ github.sha }} .
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: backend/product-service/target/surefire-reports/

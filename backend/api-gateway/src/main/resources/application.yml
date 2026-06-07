@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: api-gateway
+  main:
+    web-application-type: reactive
+
+
+  config:
+    import: "optional:configserver:http://localhost:8888"
+    #import: "optional:configserver:http://config-server:8888"

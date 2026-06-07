@@ -1,0 +1,84 @@
+groups:
+
+  # ─────────────────────────────────────────────────────────────
+  # SLO: Product Service must maintain < 1% error rate (SLO 99%)
+  # SLO: P99 latency must stay below 2 seconds
+  # SLO: Service availability must be >= 99.9%
+  # ─────────────────────────────────────────────────────────────
+  - name: product-service-slos
+    rules:
+
+      # Error rate > 1% over 5 minutes → SLO breach
+      - alert: ProductServiceHighErrorRate
+        expr: |
+          rate(http_server_requests_seconds_count{
+            application="product-service", status=~"5.."
+          }[5m])
+          /
+          rate(http_server_requests_seconds_count{
+            application="product-service"
+          }[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "🔴 Product Service error rate > 1% (SLO breach)"
+          description: "Current error rate: {{ $value | humanizePercentage }}"
+
+      # P99 latency > 2s over 5 minutes → SLO breach
+      - alert: ProductServiceHighLatency
+        expr: |
+          histogram_quantile(0.99,
+            rate(http_server_requests_seconds_bucket{
+              application="product-service"
+            }[5m])
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "🟡 Product Service P99 latency > 2s"
+          description: "P99 latency: {{ $value | humanizeDuration }}"
+
+      # Service completely down
+      - alert: ProductServiceDown
+        expr: up{job="product-service-local"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "🔴 Product Service is DOWN"
+          description: "Instance {{ $labels.instance }} has been unreachable for > 1 minute"
+
+  # ─────────────────────────────────────────────────────────────
+  # JVM health alerts
+  # ─────────────────────────────────────────────────────────────
+  - name: product-service-jvm
+    rules:
+
+      # JVM heap > 85%
+      - alert: ProductServiceHighHeapUsage
+        expr: |
+          jvm_memory_used_bytes{application="product-service", area="heap"}
+          /
+          jvm_memory_max_bytes{application="product-service", area="heap"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "🟡 Product Service JVM heap usage > 85%"
+
+      # Circuit breaker OPEN
+      - alert: InventoryCircuitBreakerOpen
+        expr: |
+          resilience4j_circuitbreaker_state{
+            application="product-service", name="inventoryService", state="open"
+          } == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "🟡 Inventory circuit breaker is OPEN — inventory calls failing"

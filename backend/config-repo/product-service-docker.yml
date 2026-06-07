@@ -1,0 +1,173 @@
+server:
+  port: 0   # ✅ RANDOM PORT (explained below)
+
+spring:
+  application:
+    name: product-service
+
+  datasource:
+    url: jdbc:postgresql://postgres:5432/productdocker
+    username: postgresdocker
+    password: admindocker
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: ProductServicePool
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          batch_size: 30
+          fetch_size: 50
+        order_inserts: true
+        order_updates: true
+        generate_statistics: false  # disabled in docker/prod
+
+  flyway:
+    enabled: true
+    repair : true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  kafka:
+    #bootstrap-servers: localhost:9092
+    bootstrap-servers: kafka:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+  cache:
+    type: redis
+
+  data:
+    redis:
+      sentinel:
+        master: mymaster
+        nodes:
+          - redis-sentinel:26379
+      timeout: 60000
+
+  cloud:
+    discovery:
+      locator:
+        enabled: true
+        lower-case-service-id: true
+
+    loadbalancer:
+      retry:
+        enabled: true   # ✅ IMPORTANT → allows retry before fallback
+
+eureka:
+  client:
+    register-with-eureka: true
+    fetch-registry: true
+    service-url:
+      #defaultZone: http://localhost:8761/eureka/
+      defaultZone: http://discovery-server:8761/eureka/
+
+server:
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+loki:
+  url: http://loki:3100
+
+features:
+  bulk-upload-enabled: true
+  ai-pricing-enabled: false
+  new-review-flow-enabled: false
+
+sentry:
+  dsn: ${SENTRY_DSN:}
+  traces-sample-rate: 0.1
+  environment: docker
+  send-default-pii: false
+
+aws:
+  access-key: ${AWS_ACCESS_KEY:your-access-key}
+  secret-key: ${AWS_SECRET_KEY:your-secret-key}
+  region: ap-south-1
+  s3:
+    bucket: flipkart-clone-products
+  cloudfront:
+    domain: ${AWS_CLOUDFRONT_DOMAIN:your-distribution-id.cloudfront.net}
+
+# ------------------------------------------
+# ✅ FEIGN + CIRCUIT BREAKER INTEGRATION
+# ------------------------------------------
+feign:
+  circuitbreaker:
+    enabled: true
+
+  client:
+    config:
+      inventory-service:
+        retryer: feign.Retryer.Default
+        connectTimeout: 2000
+        readTimeout: 3000
+
+# ------------------------------------------
+# ✅ RESILIENCE4J — FULL SETUP
+# ------------------------------------------
+resilience4j:
+
+  circuitbreaker:
+    instances:
+      inventoryService:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        recordExceptions:
+          - java.lang.Exception   # ✅ VERY IMPORTANT
+
+  retry:
+    instances:
+      inventoryService:
+        maxAttempts: 3
+        waitDuration: 1s
+
+  ratelimiter:
+    instances:
+      inventoryService:
+        limitForPeriod: 5
+        limitRefreshPeriod: 10s
+        timeoutDuration: 0
+
+  bulkhead:
+    instances:
+      inventoryService:
+        maxConcurrentCalls: 5
+        maxWaitDuration: 0
+
+  timelimiter:
+    instances:
+      inventoryService:
+        timeoutDuration: 2s
+        cancelRunningFuture: true
+
+test:
+  message: "HELLO VERSION 5"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,busrefresh
+
+logging:
+  level:
+    org.springframework.cache: TRACE
