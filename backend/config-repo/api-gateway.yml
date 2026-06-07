@@ -1,0 +1,127 @@
+server:
+  port: 9000
+
+spring:
+  application:
+    name: api-gateway
+
+  # ------------------------------------------
+  # Redis (for RequestRateLimiter)
+  # ------------------------------------------
+  data:
+    redis:
+      host: localhost
+      # host: redis-sentinel (docker)
+      port: 6379
+
+  cloud:
+    gateway:
+
+      # ------------------------------------------
+      # ✅ GLOBAL CORS
+      # ------------------------------------------
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+
+      # ------------------------------------------
+      # ✅ RATE LIMITING (applied to all routes)
+      # ------------------------------------------
+      default-filters:
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter.replenishRate: 10    # tokens added per second
+            redis-rate-limiter.burstCapacity: 20    # max tokens in bucket
+            redis-rate-limiter.requestedTokens: 1
+            key-resolver: "#{@ipKeyResolver}"
+
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+
+      routes:
+
+        # ------------------------------------------
+        # AUTH SERVICE (PUBLIC — no JWT required)
+        # ------------------------------------------
+        - id: auth-service
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth/v1/**
+
+        # ------------------------------------------
+        # PRODUCT SERVICE — v1 (current)
+        # ------------------------------------------
+        - id: product-service-v1
+          uri: lb://product-service
+          predicates:
+            - Path=/api/v1/products/**
+          filters:
+            - RewritePath=/api/v1/products/(?<segment>.*), /api/v1/products/${segment}
+
+        # ------------------------------------------
+        # PRODUCT SERVICE — v2 (paginated)
+        # ------------------------------------------
+        - id: product-service-v2
+          uri: lb://product-service
+          predicates:
+            - Path=/api/v2/products/**
+          filters:
+            - RewritePath=/api/v2/products/(?<segment>.*), /api/v2/products/${segment}
+
+        # ------------------------------------------
+        # PRODUCT SERVICE — legacy path rewrite
+        # /api/products/** → /api/v1/products/**
+        # ------------------------------------------
+        - id: product-service-legacy
+          uri: lb://product-service
+          predicates:
+            - Path=/api/products/**
+          filters:
+            - RewritePath=/api/products/(?<segment>.*), /api/v1/products/${segment}
+
+        # ------------------------------------------
+        # PRODUCT SERVICE — CATEGORIES
+        # ------------------------------------------
+        - id: product-service-categories
+          uri: lb://product-service
+          predicates:
+            - Path=/categories/**
+
+# ------------------------------------------
+# EUREKA
+# ------------------------------------------
+eureka:
+  client:
+    register-with-eureka: true
+    fetch-registry: true
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+      #defaultZone: http://discovery-server:8761/eureka/
+
+# ------------------------------------------
+# API KEY CONFIG
+# ------------------------------------------
+api:
+  key:
+    value: ${API_KEY:flipkart-internal-key}
+
+# ------------------------------------------
+# ACTUATOR
+# ------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,busrefresh

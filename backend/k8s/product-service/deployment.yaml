@@ -1,0 +1,109 @@
+## ─────────────────────────────────────────────────────────────────
+## BLUE DEPLOYMENT  (active by default)
+## To make green active:
+##   kubectl patch svc product-service -n flipkart \
+##     -p '{"spec":{"selector":{"version":"green"}}}'
+## ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service-blue
+  namespace: flipkart
+  labels:
+    app: product-service
+    version: blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product-service
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: product-service
+        version: blue
+    spec:
+      containers:
+        - name: product-service
+          image: ghcr.io/ranjan-fullstack/product-service:blue
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: product-service-config
+            - secretRef:
+                name: product-service-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 45
+            periodSeconds: 10
+
+---
+## ─────────────────────────────────────────────────────────────────
+## GREEN DEPLOYMENT  (standby — receives traffic after cutover)
+## ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service-green
+  namespace: flipkart
+  labels:
+    app: product-service
+    version: green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product-service
+      version: green
+  template:
+    metadata:
+      labels:
+        app: product-service
+        version: green
+    spec:
+      containers:
+        - name: product-service
+          image: ghcr.io/ranjan-fullstack/product-service:green
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: product-service-config
+            - secretRef:
+                name: product-service-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 45
+            periodSeconds: 10
