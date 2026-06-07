@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: product-service
-          image: ghcr.io/ranjan-fullstack/product-service:blue
+          image: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-south-1.amazonaws.com/product-service:blue
           ports:
             - containerPort: 8081
           envFrom:
@@ -80,7 +80,7 @@ spec:
     spec:
       containers:
         - name: product-service
-          image: ghcr.io/ranjan-fullstack/product-service:green
+          image: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-south-1.amazonaws.com/product-service:green
           ports:
             - containerPort: 8081
           envFrom:
