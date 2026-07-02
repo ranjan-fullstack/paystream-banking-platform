@@ -1,0 +1,620 @@
+openapi: 3.0.3
+info:
+  title: PayStream UPI Service
+  version: 1.0.0
+  description: |
+    Handles Unified Payments Interface (UPI) operations: VPA (Virtual Payment Address)
+    registration, PIN management, pay/collect/refund flows. All endpoints require a
+    Bearer JWT when accessed through the API Gateway.
+servers:
+  - url: http://localhost:9007
+    description: upi-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: VPA
+  - name: UPI Payment
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/upi/vpa/register:
+    post:
+      tags: [VPA]
+      summary: Register a new Virtual Payment Address (VPA)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VpaRegisterRequest'
+            example:
+              customerId: CUST00000001
+              accountNumber: '1234567890123456'
+              handle: jane.doe
+      responses:
+        '201':
+          description: VPA registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VpaResponse'
+              example:
+                vpa: jane.doe@paystream
+                customerId: CUST00000001
+                accountNumber: '1234567890123456'
+                isDefault: true
+                active: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Account could not be validated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 422, error: INVALID_ACCOUNT, message: 'Account could not be validated' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/vpa/{vpa}:
+    get:
+      tags: [VPA]
+      summary: Validate / look up a VPA
+      parameters:
+        - name: vpa
+          in: path
+          required: true
+          schema:
+            type: string
+          example: jane.doe@paystream
+      responses:
+        '200':
+          description: VPA found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VpaResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: VPA not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: VPA_NOT_FOUND, message: 'VPA not found' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/vpa/customer/{id}:
+    get:
+      tags: [VPA]
+      summary: List all VPAs registered to a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Customer ID
+          example: CUST00000001
+      responses:
+        '200':
+          description: List of VPAs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VpaResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/vpa/set-pin:
+    post:
+      tags: [VPA]
+      summary: Set or reset the UPI PIN for a VPA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPinRequest'
+            example:
+              vpa: jane.doe@paystream
+              upiPin: '1234'
+      responses:
+        '200':
+          description: PIN set
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: VPA not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: VPA_NOT_FOUND, message: 'VPA not found' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/pay:
+    post:
+      tags: [UPI Payment]
+      summary: Pay another VPA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpiPayRequest'
+            example:
+              senderVpa: jane.doe@paystream
+              receiverVpa: john.smith@paystream
+              amount: 1500.00
+              upiPin: '1234'
+              remarks: Lunch
+      responses:
+        '201':
+          description: Payment processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpiTransactionResponse'
+              example:
+                upiTransactionId: UPI2026062800001
+                transactionType: PAY
+                senderVpa: jane.doe@paystream
+                receiverVpa: john.smith@paystream
+                amount: 1500.00
+                status: COMPLETED
+                npciTransactionId: '021234567890'
+                initiatedAt: '2026-06-28T12:00:00'
+                completedAt: '2026-06-28T12:00:01'
+                expiresAt: null
+                failureReason: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid UPI PIN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: INVALID_PIN, message: 'Invalid UPI PIN' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Sender or receiver VPA not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: VPA_NOT_FOUND, message: 'Receiver VPA not found' }
+        '422':
+          description: Account could not be validated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 422, error: INVALID_ACCOUNT, message: 'Account could not be validated' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/collect:
+    post:
+      tags: [UPI Payment]
+      summary: Request money from another VPA (collect request)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpiCollectMoneyRequest'
+            example:
+              requestedByVpa: jane.doe@paystream
+              requestedFromVpa: john.smith@paystream
+              amount: 750.00
+              remarks: Movie tickets
+      responses:
+        '201':
+          description: Collect request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpiTransactionResponse'
+              example:
+                upiTransactionId: UPI2026062800002
+                transactionType: COLLECT
+                senderVpa: john.smith@paystream
+                receiverVpa: jane.doe@paystream
+                amount: 750.00
+                status: PENDING_PIN
+                npciTransactionId: '021234567891'
+                initiatedAt: '2026-06-28T12:10:00'
+                completedAt: null
+                expiresAt: '2026-06-28T12:25:00'
+                failureReason: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: VPA not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: VPA_NOT_FOUND, message: 'VPA not found' }
+        '422':
+          description: Account could not be validated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 422, error: INVALID_ACCOUNT, message: 'Account could not be validated' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/collect/{txnId}/respond:
+    put:
+      tags: [UPI Payment]
+      summary: Accept or decline a collect request
+      parameters:
+        - name: txnId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: UPI2026062800002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectRespondRequest'
+            example:
+              accept: true
+              upiPin: '1234'
+      responses:
+        '200':
+          description: Collect request responded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpiTransactionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid UPI PIN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: INVALID_PIN, message: 'Invalid UPI PIN' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Collect request has expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 410, error: COLLECT_EXPIRED, message: 'Collect request has expired' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/refund:
+    post:
+      tags: [UPI Payment]
+      summary: Refund a completed UPI transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+            example:
+              originalUpiTransactionId: UPI2026062800001
+              amount: 1500.00
+              reason: Duplicate payment
+      responses:
+        '201':
+          description: Refund processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpiTransactionResponse'
+              example:
+                upiTransactionId: UPI2026062800003
+                transactionType: REFUND
+                senderVpa: john.smith@paystream
+                receiverVpa: jane.doe@paystream
+                amount: 1500.00
+                status: COMPLETED
+                npciTransactionId: '021234567892'
+                initiatedAt: '2026-06-28T13:00:00'
+                completedAt: '2026-06-28T13:00:01'
+                expiresAt: null
+                failureReason: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Original transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'Original UPI transaction not found' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/{transactionId}:
+    get:
+      tags: [UPI Payment]
+      summary: Get a UPI transaction by ID
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: UPI2026062800001
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpiTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/upi/customer/{id}/history:
+    get:
+      tags: [UPI Payment]
+      summary: Get UPI transaction history for a VPA
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Virtual Payment Address (VPA)
+          example: jane.doe@paystream
+      responses:
+        '200':
+          description: List of UPI transactions (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UpiTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    UpiTransactionStatus:
+      type: string
+      enum: [INITIATED, PENDING_PIN, PIN_VERIFIED, PROCESSING, COMPLETED, FAILED, EXPIRED, DECLINED]
+    UpiTransactionType:
+      type: string
+      enum: [PAY, COLLECT, REFUND]
+    VpaRegisterRequest:
+      type: object
+      required: [customerId, accountNumber, handle]
+      properties:
+        customerId:
+          type: string
+        accountNumber:
+          type: string
+        handle:
+          type: string
+          pattern: '^[a-zA-Z0-9._-]{3,50}$'
+          description: Local part of the VPA, before "@paystream"
+    VpaResponse:
+      type: object
+      properties:
+        vpa:
+          type: string
+        customerId:
+          type: string
+        accountNumber:
+          type: string
+        isDefault:
+          type: boolean
+        active:
+          type: boolean
+    SetPinRequest:
+      type: object
+      required: [vpa, upiPin]
+      properties:
+        vpa:
+          type: string
+        upiPin:
+          type: string
+          pattern: '^(\d{4}|\d{6})$'
+          description: 4 or 6 digit numeric PIN
+    UpiPayRequest:
+      type: object
+      required: [senderVpa, receiverVpa, amount, upiPin]
+      properties:
+        senderVpa:
+          type: string
+        receiverVpa:
+          type: string
+        amount:
+          type: number
+          format: double
+          minimum: 1.00
+          maximum: 100000.00
+        upiPin:
+          type: string
+        remarks:
+          type: string
+    UpiCollectMoneyRequest:
+      type: object
+      required: [requestedByVpa, requestedFromVpa, amount]
+      properties:
+        requestedByVpa:
+          type: string
+          description: VPA of the payee requesting money
+        requestedFromVpa:
+          type: string
+          description: VPA of the payer who will be asked to pay
+        amount:
+          type: number
+          format: double
+          minimum: 1.00
+          maximum: 100000.00
+        remarks:
+          type: string
+    CollectRespondRequest:
+      type: object
+      required: [accept]
+      properties:
+        accept:
+          type: boolean
+        upiPin:
+          type: string
+          description: Required when accept is true
+    RefundRequest:
+      type: object
+      required: [originalUpiTransactionId, amount]
+      properties:
+        originalUpiTransactionId:
+          type: string
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+        reason:
+          type: string
+    UpiTransactionResponse:
+      type: object
+      properties:
+        upiTransactionId:
+          type: string
+        transactionType:
+          $ref: '#/components/schemas/UpiTransactionType'
+        senderVpa:
+          type: string
+        receiverVpa:
+          type: string
+        amount:
+          type: number
+          format: double
+        status:
+          $ref: '#/components/schemas/UpiTransactionStatus'
+        npciTransactionId:
+          type: string
+        initiatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        failureReason:
+          type: string
+          nullable: true
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 400, error: VALIDATION_FAILED, message: 'amount must be at least 1.00' }
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'UPI transaction not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

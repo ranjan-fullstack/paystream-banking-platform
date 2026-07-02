@@ -1,0 +1,5 @@
+serviceName: customer-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/customer-service
+  tag: "latest"
+containerPort: 9002

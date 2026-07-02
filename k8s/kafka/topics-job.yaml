@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: paystream-kafka-topics-init
+  namespace: paystream
+  labels:
+    app: kafka-topics-init
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: kafka-topics-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: kafka-topics-init
+          image: confluentinc/cp-kafka:7.5.0
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: paystream-kafka-config
+                  key: bootstrap-servers
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              echo "Waiting for Kafka to be ready...";
+              cub kafka-ready -b "$KAFKA_BOOTSTRAP_SERVERS" 1 30;
+              for topic in \
+                payment.neft.initiated \
+                payment.neft.completed \
+                payment.rtgs.initiated \
+                payment.rtgs.settled \
+                payment.imps.initiated \
+                payment.imps.completed \
+                payment.upi.initiated \
+                payment.upi.completed \
+                fraud.alert \
+                account.created \
+                customer.kyc.updated \
+                notification.send \
+              ; do
+                kafka-topics --bootstrap-server "$KAFKA_BOOTSTRAP_SERVERS" --create --if-not-exists --topic "$topic" --partitions 3 --replication-factor 3;
+                kafka-topics --bootstrap-server "$KAFKA_BOOTSTRAP_SERVERS" --create --if-not-exists --topic "$topic.DLT" --partitions 3 --replication-factor 3;
+              done;
+              echo "PayStream Kafka topics created.";
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paystream-kafka-config
+  namespace: paystream
+data:
+  # AWS MSK bootstrap brokers (TLS listener) — replace with the
+  # actual MSK broker endpoints output by the Terraform MSK module.
+  bootstrap-servers: "b-1.paystream.internal:9092,b-2.paystream.internal:9092"

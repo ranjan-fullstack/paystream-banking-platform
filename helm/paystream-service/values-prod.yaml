@@ -1,0 +1,17 @@
+namespace: paystream-prod
+replicaCount: 3
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 768Mi
+
+hpa:
+  minReplicas: 3
+  maxReplicas: 8
+
+pdb:
+  minAvailable: 2

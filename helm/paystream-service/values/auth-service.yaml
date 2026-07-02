@@ -1,0 +1,5 @@
+serviceName: auth-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/auth-service
+  tag: "latest"
+containerPort: 9005

@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NAMESPACE: paystream-staging
+#
+# Staging mirrors production topology at reduced scale.
+#   Target: 2 replicas × 14 services = 28 baseline pods.
+#   Quota allows up to 60 pods to support HPA burst and monitoring sidecars.
+#
+# Apply: kubectl apply -f k8s/quota/namespace-staging.yaml -n paystream-staging
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: paystream-staging-quota
+  namespace: paystream-staging
+spec:
+  hard:
+    # Compute — 2 replicas × 14 services × 250m req = 7 CPU baseline
+    # Quota at 4× baseline to allow HPA + load-test bursts
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    # Workloads
+    pods: "60"
+    # Storage
+    persistentvolumeclaims: "20"
+    requests.storage: 100Gi
+    # Object count guards
+    services: "30"
+    secrets: "40"
+    configmaps: "40"
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: paystream-staging-limitrange
+  namespace: paystream-staging
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 1Gi
+      defaultRequest:
+        cpu: 100m
+        memory: 256Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      min:
+        cpu: 10m
+        memory: 64Mi
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: 8Gi

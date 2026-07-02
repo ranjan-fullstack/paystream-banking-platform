@@ -1,0 +1,37 @@
+﻿server:
+  port: 9009
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/paystream_fraud
+    #url: jdbc:postgresql://postgres:5432/paystream_fraud
+    username: ${FRAUD_DB_USERNAME}
+    password: ${FRAUD_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    #bootstrap-servers: kafka:9092
+    consumer:
+      group-id: fraud-detection-service-group
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,busrefresh
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans

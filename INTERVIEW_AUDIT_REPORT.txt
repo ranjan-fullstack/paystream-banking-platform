@@ -1,0 +1,706 @@
+================================================================================
+         PAYSTREAM BANKING PLATFORM — BRUTALLY HONEST TECHNICAL AUDIT
+         Senior Technical Interviewer Perspective | Target: 15 LPA Role
+         Evaluated by: Claude Code (Senior Backend / Fintech Lens)
+         Date: 2026-06-30
+================================================================================
+
+VERDICT FIRST:
+This project will pass a resume screen and get you an interview. It will get
+you to the next round at a 12-14 LPA level if you can explain it well. At
+15 LPA, an experienced fintech interviewer will find the critical holes within
+20 minutes. Here is why.
+
+================================================================================
+THE SMOKING GUN — READ THIS FIRST
+================================================================================
+
+Before anything else, open PROJECT_ANALYSIS.txt in the root directory.
+The title at the top reads:
+
+    "[conversion artifact — deleted]"
+
+And PAYSTREAM_BUILD_SUMMARY.txt contains:
+
+    "EKS cluster 'paystream-cluster'" (now fixed)
+
+This project was converted from an e-commerce clone. The analysis
+document for the old project was left in the repo. Any interviewer who does
+"ls" in the root directory and opens that file — and they will, because it
+is a .txt sitting in the root — immediately knows you did not build a banking
+platform from scratch.
+
+This is the single most damaging thing in the entire repository.
+
+ACTION: Delete PROJECT_ANALYSIS.txt and PAYSTREAM_BUILD_SUMMARY.txt before
+showing this to anyone. These two files are your biggest liability.
+
+================================================================================
+1. CODE QUALITY
+================================================================================
+
+VERDICT: Better than most AI-generated portfolio projects, but has tells.
+
+------------------------------------------------------------------------
+WHAT IS GENUINELY GOOD
+------------------------------------------------------------------------
+
+AccountServiceImpl.java (line 160-168):
+  Uses findWithLockByAccountNumber() with @Lock(LockModeType.PESSIMISTIC_WRITE)
+  for debit/credit/hold operations. That is correct and shows understanding
+  of concurrent balance updates.
+
+BankAccount.java (line 65):
+  Has @Version for optimistic locking. Both pessimistic and optimistic
+  strategies are present — a real architectural decision, not boilerplate.
+
+PiiEncryptionConverter.java:
+  AES-256-GCM with per-value IV is actually correct cryptography. Random IV
+  prepended to ciphertext means the same plaintext never produces the same
+  stored value. The IV is 12 bytes, tag length is 128 bits, Base64 encoded.
+  This is not trivial to get right and demonstrates real security knowledge.
+
+Exception hierarchy:
+  Domain-specific exceptions (AccountNotFoundException,
+  InsufficientBalanceException, etc.) bubble cleanly through
+  GlobalExceptionHandler per service. No naked RuntimeException being rethrown.
+  Clean, consistent pattern across all 14 services.
+
+------------------------------------------------------------------------
+THE PROBLEMS
+------------------------------------------------------------------------
+
+BUG #1 — System.out.println in production JWT filter
+File: api-gateway/src/main/java/com/paystream/apigateway/filter/JwtAuthenticationFilter.java
+Lines: 22 and 33
+
+    @PostConstruct
+    public void init() {
+        System.out.println("JWT FILTER LOADED");         // <-- Line 22
+    }
+
+    public Mono<Void> filter(...) {
+        ...
+        System.out.println("JWT FILTER HIT: " + path);  // <-- Line 33
+
+Every single incoming request logs the full path to stdout, bypassing SLF4J,
+on the critical authentication filter in a reactive gateway. This:
+  - Logs every URL (including sensitive paths) to stdout with no MDC context
+  - Bypasses the structured logging pipeline (Loki, Grafana)
+  - Is a serious performance issue under load in a reactive event loop
+  - Is the FIRST class an interviewer will open when looking at the gateway
+
+An interviewer at a fintech company will spot this and immediately lose
+confidence in the production readiness of the entire codebase.
+
+BUG #2 — Hardcoded secrets committed to Git
+File: config-repo/application.yml (line 10)
+File: config-repo/auth-service.yml (line 27)
+
+    jwt:
+      secret: my-super-secret-key-my-super-secret-key
+
+The config-repo is in the same repository as the code. The JWT secret and
+the database password (root/root) are in plaintext, committed to the
+repository, in the same repo that will be shared with an interviewer.
+This is a critical security red flag that any senior fintech engineer will
+explicitly call out in an interview.
+
+BUG #3 — show-sql and security DEBUG logging committed
+File: config-repo/auth-service.yml (lines 31-32)
+
+    show-sql: true
+    logging:
+      level:
+        org.springframework.security: DEBUG
+
+These are left in the committed config that would be loaded by the config
+server. Spring Security DEBUG logs print password hashes, token values, and
+authentication decisions to the log stream — a PII and security nightmare.
+
+BUG #4 — ddl-auto: update on a banking service
+File: config-repo/account-service.yml (line 15)
+
+    ddl-auto: update
+
+For a banking service managing account balances. In production this should
+be "validate" at most, with schema changes managed exclusively through
+Flyway migrations. "update" can silently drop columns, alter constraints,
+or corrupt schema on startup.
+
+BUG #5 — SSL disabled on database connection
+File: config-repo/auth-service.yml (line 7)
+
+    url: jdbc:mysql://localhost:3306/paystream_auth?useSSL=false...
+
+Disables SSL for the MySQL connection to the authentication database.
+
+================================================================================
+2. ARCHITECTURE DEPTH
+================================================================================
+
+VERDICT: The separation is logical and demonstrates real thought. But the
+distributed transaction problem is fatal for a banking product.
+
+------------------------------------------------------------------------
+WHAT IS GENUINELY GOOD
+------------------------------------------------------------------------
+
+Kafka event flow is real:
+  account-service publishes account.created
+  Payment services publish payment.*.completed
+  fraud-detection-service consumes those events and builds its own read model
+  This is CQRS-lite and is actually a smart design choice.
+
+Internal vs. External controller split:
+  InternalAccountController separates gateway-facing APIs from Feign-client
+  APIs called by payment services. This is a correct pattern.
+
+Idempotency filter:
+  IdempotencyFilter.java uses Redis with 24h TTL and correctly returns HTTP 409
+  on duplicate idempotency keys. This is genuinely well-implemented.
+
+Correlation ID propagation:
+  LoggingFilter generates X-Correlation-ID and propagates it downstream.
+  Response echoes it back. Correct pattern.
+
+NEFT batch scheduler:
+  NeftBatchScheduler.java with cron "0 0,30 8-19 * * MON-SAT" correctly
+  models batched settlement. The batch entity with success/failure counts
+  is realistic.
+
+------------------------------------------------------------------------
+THE CRITICAL FLAW — No Distributed Transaction Safety
+------------------------------------------------------------------------
+
+File: upi-service/src/main/java/com/paystream/upiservice/service/impl/UpiTransactionServiceImpl.java
+Lines: 175-189
+
+    private void settle(UpiTransaction txn, String debitAccountNumber, String creditAccountNumber) {
+        try {
+            accountClient.debit(debitAccountNumber, ...);   // HTTP call — commits in account-service
+            accountClient.credit(creditAccountNumber, ...); // HTTP call — may fail
+            txn.setStatus(UpiTransactionStatus.COMPLETED);
+        } catch (Exception e) {
+            log.error("UPI settlement failed for {}", txn.getUpiTransactionId(), e);
+            txn.setStatus(UpiTransactionStatus.FAILED);     // Money is gone. Status is FAILED.
+        }
+    }
+
+THE BUG: If accountClient.debit() succeeds (money leaves sender's account)
+and accountClient.credit() throws a FeignException (network timeout,
+account-service pod restart, beneficiary account not found), the money
+has permanently left the sender's account but never arrived at the receiver.
+
+The @Transactional annotation on the UPI service method only governs the
+UPI service's own PostgreSQL database. accountClient.debit() is an HTTP call
+that committed independently in account-service's own transaction. There is
+no compensating transaction. No saga. No reversal. Money vanishes.
+
+THE SAME BUG EXISTS IN:
+  - rtgs-service/.../RtgsServiceImpl.java (lines 73-74)
+  - imps-service/.../ImpsServiceImpl.java (lines 73-74)
+  - neft-service/.../NeftBatchScheduler.java (debit/credit inside the batch loop)
+
+An interviewer at PhonePe, Razorpay, or any banking product company will ask:
+"What happens if the credit call fails after the debit succeeds?"
+The correct answer requires a Saga pattern with a compensating reverseDebit()
+call. There is none in this codebase.
+
+================================================================================
+3. BUSINESS LOGIC CORRECTNESS
+================================================================================
+
+VERDICT: Most rules are directionally correct. Two significant inaccuracies
+that an interviewer who knows RBI guidelines will catch immediately.
+
+------------------------------------------------------------------------
+NEFT WINDOW — FACTUALLY WRONG SINCE DECEMBER 2019
+------------------------------------------------------------------------
+
+File: neft-service/src/main/java/com/paystream/neftservice/util/NeftWindowValidator.java
+
+The validator enforces Monday-Saturday, 8:00 AM to 7:00 PM.
+
+RBI CIRCULAR RBI/2019-20/125 (dated December 2019) made NEFT available 24x7,
+every day including Sundays and bank holidays, effective December 16, 2019.
+
+There is no NEFT window anymore. The code is enforcing a rule that has not
+existed for over 5 years. If an interviewer asks "Tell me about your NEFT
+window validation," and you explain the Mon-Sat 8am-7pm rule, they will
+immediately know you did not research current RBI guidelines before building
+this.
+
+FIX: Remove NeftWindowValidator entirely or change isWithinWindow() to always
+return true. Add a comment citing RBI Circular RBI/2019-20/125.
+
+------------------------------------------------------------------------
+RTGS WINDOW — CLOSE TIME IS INCORRECT
+------------------------------------------------------------------------
+
+File: rtgs-service/src/main/java/com/paystream/rtgsservice/util/RtgsWindowValidator.java
+Lines: 16-18
+
+    private static final LocalTime WEEKDAY_CLOSE = LocalTime.of(18, 0);   // Wrong
+    private static final LocalTime SATURDAY_CLOSE = LocalTime.of(13, 0);  // Wrong
+
+Current RBI RTGS window:
+  Weekdays:  7:00 AM to 5:45 PM (not 6:00 PM)
+  Saturdays: 7:00 AM to 1:45 PM (not 1:00 PM)
+
+The weekday close is off by 15 minutes. The Saturday close is off by 45 minutes.
+
+------------------------------------------------------------------------
+DAILY LIMITS ARE SEEDED BUT NEVER ENFORCED
+------------------------------------------------------------------------
+
+File: account-service/.../AccountServiceImpl.java (lines 207-213)
+Seeds AccountLimit records: NEFT (10L), RTGS (1Cr), IMPS (5L), UPI (1L)
+
+File: account-service/.../AccountServiceImpl.java (lines 160-168)
+The debit() method checks available balance but NEVER checks usedTodayAmount.
+
+When NEFT/RTGS/IMPS/UPI call accountClient.debit(), they pass an AmountRequest
+with the amount and reference number. The debit() method subtracts from the
+balance only. It does not:
+  1. Look up the AccountLimit for the given payment mode
+  2. Check if (usedTodayAmount + request.getAmount()) <= dailyLimit
+  3. Update usedTodayAmount after a successful debit
+
+The AccountLimit entity exists. The LimitResetScheduler resets it at midnight.
+But the limit check code does not exist in the payment path. You can send
+1000 IMPS transactions of Rs. 5 lakh each on the same day and none will be
+rejected on limit grounds.
+
+If an interviewer asks "Walk me through how daily limits are enforced,"
+this gap will be immediately exposed.
+
+------------------------------------------------------------------------
+FRAUD DETECTION IS POST-SETTLEMENT, NOT PRE-SETTLEMENT
+------------------------------------------------------------------------
+
+File: fraud-detection-service/.../PaymentEventConsumer.java
+
+The consumer listens to payment.*.completed events — meaning fraud detection
+runs AFTER the money has already moved. A BLOCK action from the fraud rule
+engine raises a FraudAlert entity in the database but cannot reverse a
+settled transaction.
+
+The code acknowledges this in a comment, which shows awareness. But an
+interviewer will ask: "If your fraud engine detects a fraudulent transaction
+and sets the action to BLOCK, what actually gets blocked?"
+
+The honest answer: nothing. The alert exists for human review only.
+
+------------------------------------------------------------------------
+WHAT IS CORRECT
+------------------------------------------------------------------------
+
+IMPS: 24x7, min Rs. 1, max Rs. 5 lakh — correct per NPCI guidelines.
+UPI: 24x7, max Rs. 1 lakh — correct per NPCI guidelines.
+UPI PIN: BCrypt hashed — correct.
+UPI collect request expiry: 30 minutes — correct per NPCI.
+RTGS minimum: Rs. 2 lakh — correct per RBI.
+NEFT batch scheduler cron "0 0,30 8-19 * * MON-SAT" — historically correct
+  (though the window itself no longer applies).
+
+================================================================================
+4. TESTING QUALITY
+================================================================================
+
+VERDICT: The tests are better than average. They test real business logic,
+not trivial getters and setters.
+
+------------------------------------------------------------------------
+WHAT IS GENUINELY GOOD
+------------------------------------------------------------------------
+
+AccountServiceTest.java tests:
+  - Hold/release mechanics with exact balance arithmetic
+  - Insufficient balance on debit (verify save() never called)
+  - Concurrent optimistic locking failure propagation
+  - Account number generation retry logic (mocks existsByAccountNumber to
+    return true once, then false)
+  These are real edge cases, not boilerplate.
+
+FraudRuleEngineTest.java tests:
+  - Velocity threshold (4 txns = no alert, 6 txns = alert)
+  - Amount anomaly at exactly 3x historical average
+  - Duplicate transaction detection (same amount + beneficiary)
+  - Odd-hours correctly exempts IMPS (24x7 mode)
+  - Daily limit breach with cumulative total
+  These are domain-meaningful tests, not "does the method get called" tests.
+
+------------------------------------------------------------------------
+WHAT AN INTERVIEWER WILL CALL OUT
+------------------------------------------------------------------------
+
+NO TESTCONTAINERS ANYWHERE:
+  Everything is mocked. When asked "How do you test the pessimistic locking
+  behavior?", the honest answer is: you don't — you test that the repository
+  method is called, not that the database actually acquires a lock. A real
+  Testcontainers test with two threads simultaneously debiting the same account
+  would demonstrate actual concurrency safety.
+
+ZERO INTEGRATION TESTS FOR PAYMENT FLOWS:
+  There is no test that spins up an account-service, makes a UPI pay call,
+  and verifies the balance changed. The partial-money-transfer bug described
+  in Section 2 is completely invisible in the test suite.
+
+NO TEST FOR DAILY LIMIT ENFORCEMENT:
+  Because the enforcement code does not exist, there is nothing to test.
+  But the absence of such tests makes the gap obvious.
+
+NO CONTRACT TESTS (Pact/Spring Cloud Contract):
+  If the AccountClient Feign interface changes its request/response shape,
+  there is no test that catches the breaking change before deployment.
+
+================================================================================
+5. SECURITY
+================================================================================
+
+VERDICT: Mixed. Some genuinely good choices, several interview-stopping problems.
+
+------------------------------------------------------------------------
+GOOD
+------------------------------------------------------------------------
+
+- BCrypt for passwords (auth-service PasswordConfig.java)
+- BCrypt for UPI PIN (UpiTransactionServiceImpl.java line 39)
+- AES-256-GCM for PAN and Aadhaar numbers (correctly implemented)
+- Redis-backed idempotency at gateway layer
+- JWT validation at gateway before forwarding downstream
+- Correlation ID for request tracing
+
+------------------------------------------------------------------------
+PROBLEMS
+------------------------------------------------------------------------
+
+JWT KEY TOO WEAK:
+  File: config-repo/auth-service.yml (line 27)
+  Secret: "my-super-secret-key-my-super-secret-key" (40 characters)
+  HS256 keys should be 256+ bits of cryptographic entropy from a CSPRNG.
+  A dictionary-derivable string is not a secure signing key.
+  Additionally, HS256 uses a shared symmetric secret — every service that
+  validates JWTs must possess the secret. RSA/EC asymmetric keys (RS256/ES256)
+  are preferred for multi-service architectures.
+
+NO JWT REVOCATION:
+  File: auth-service/.../AuthService.java
+  Tokens are issued and valid until expiry. If a user logs out or a token is
+  stolen, there is no mechanism to invalidate it. A Redis-backed JTI blacklist
+  with TTL equal to the remaining token lifetime is the standard fix.
+  Refresh tokens are stored in DB (good) but access tokens have no revocation.
+
+ROLE CHECKS ONLY AT GATEWAY, NOT IN SERVICES:
+  File: api-gateway/.../JwtAuthenticationFilter.java (lines 76-88)
+  Role-based access control is enforced at the gateway via the X-USER-ROLE
+  header. Individual services (account-service, neft-service, etc.) have no
+  Spring Security configuration and trust the injected header blindly.
+  If a service is reachable directly (e.g., a misconfigured NetworkPolicy,
+  a dev environment without the gateway), there is no authorization check.
+  Services should validate roles independently of the gateway.
+
+BOLA (BROKEN OBJECT LEVEL AUTHORIZATION):
+  The account-service exposes GET /api/v1/accounts/{accountId}/balance.
+  There is no check that the authenticated customer owns accountId.
+  A logged-in CUSTOMER can query the balance of any account by changing
+  the UUID in the path. This is the most common API vulnerability (OWASP
+  API Security #1) and a standard interview question at fintech companies.
+
+CONFIG REPO IN SAME REPOSITORY AS CODE:
+  In production, the Spring Cloud Config Server would point to a separate
+  private Git repository. Having config (with credentials) in the same public
+  repo as the code means every person you share the interview repo with can
+  see your database passwords and JWT secret.
+
+================================================================================
+6. PRODUCTION READINESS
+================================================================================
+
+VERDICT: The infrastructure artifacts are comprehensive on paper. The services
+have real issues that would surface immediately in an end-to-end demo.
+
+------------------------------------------------------------------------
+CAN IT ACTUALLY RUN?
+------------------------------------------------------------------------
+
+docker-compose.yml is comprehensive: topic provisioning with DLTs, Redis
+Sentinel (master + replica + sentinel), Zipkin, Prometheus, Grafana, Loki.
+These are genuine and correct.
+
+HOWEVER:
+
+Profile mismatch:
+  All services default to application.yml which points to localhost URLs.
+  The docker-profile URLs are commented out:
+    #url: jdbc:postgresql://postgres:5432/paystream_accounts
+    #bootstrap-servers: kafka:9092
+  Running "docker compose up" as-is starts the services, but they cannot
+  find Kafka or Postgres because they are trying to reach localhost.
+  You need to set SPRING_PROFILES_ACTIVE=docker for the containers to use
+  the correct internal Docker network hostnames.
+
+Notification service does nothing:
+  File: notification-service/.../NotificationServiceImpl.java (line 24-32)
+  The send() method saves a NotificationLog record and immediately sets
+  status to SENT. No SMS is sent. No email is sent. No external call happens.
+  If an interviewer asks "Show me a notification getting sent," they will
+  see a DB insert and nothing else.
+
+------------------------------------------------------------------------
+THE LIMITRESETSCHEDULER SCALABILITY BOMB
+------------------------------------------------------------------------
+
+File: account-service/.../LimitResetScheduler.java (line 31)
+
+    List<AccountLimit> all = accountLimitRepository.findAll();
+
+This executes SELECT * FROM account_limits at midnight every night. With
+1 million customers, each having 4 payment mode limits, this loads 4 million
+rows into JVM heap memory simultaneously. This will cause an OOM crash at
+midnight at any real bank scale.
+
+Fix: Use a single UPDATE query:
+  UPDATE account_limits SET used_today_amount = 0,
+  reset_at = DATE_TRUNC('day', NOW()) + INTERVAL '1 day'
+  WHERE reset_at <= NOW()
+
+------------------------------------------------------------------------
+FRAUD ENGINE PERFORMANCE ISSUES
+------------------------------------------------------------------------
+
+FraudRuleEngineImpl.java (lines 47, 60, 94, 116):
+  All fraud rule checks use repository.findBy*().size() or stream().reduce()
+  patterns that load entire result sets into memory and count/sum in Java.
+
+  checkVelocity():    loads all txns in last 10 minutes, calls .size()
+  checkAmountAnomaly: loads 90 days of history, sums in Java stream
+  checkDailyLimitBreach: loads all txns since midnight, sums in Java stream
+
+These should be COUNT and SUM database queries. Under load, fetching hundreds
+of transaction rows per fraud check per transaction will destroy performance.
+
+================================================================================
+7. INTERVIEW RISK ASSESSMENT — TOP 10 QUESTIONS
+================================================================================
+
+Q1: "What happens if the credit call fails after the debit succeeds in UPI?"
+RISK: CRITICAL
+CURRENT STATE: Money is permanently lost. The exception is caught, status
+set to FAILED, but the debit in account-service already committed. No
+compensation exists.
+WHAT YOU NEED TO SAY: Acknowledge the gap. Describe a Saga pattern with a
+compensating reverseDebit() call triggered on credit failure. Mention that
+the @Transactional only covers the local service, not distributed HTTP calls.
+
+Q2: "Walk me through your NEFT window validation."
+RISK: HIGH
+CURRENT STATE: You enforced Mon-Sat 8am-7pm. NEFT has been 24x7 since
+December 2019 per RBI circular.
+WHAT TO DO: Fix the code before the interview. Always return true from
+isWithinWindow(). Cite the RBI circular.
+
+Q3: "How does your fraud engine actually block a transaction?"
+RISK: MEDIUM
+CURRENT STATE: It does not. Fraud detection is post-settlement.
+WHAT YOU NEED TO SAY: Frame this as an intentional design decision with
+known trade-off — synchronous pre-check adds latency to every payment;
+async post-check is faster but cannot block. Describe how a pre-check
+variant would work (call fraud service before debit).
+
+Q4: "How is the daily transaction limit enforced for IMPS?"
+RISK: HIGH
+CURRENT STATE: It is not enforced. The AccountLimit entity exists but
+usedTodayAmount is never incremented during payment processing.
+WHAT TO DO: Add the limit check and update to accountService.debit() before
+the interview.
+
+Q5: "What's your JWT signing strategy and key management?"
+RISK: MEDIUM
+CURRENT STATE: HS256 with a weak symmetric key in plaintext config.
+WHAT YOU NEED TO SAY: Acknowledge this is a dev config and describe the
+production approach — externalized to AWS Secrets Manager, rotated
+periodically, and ideally migrated to RS256/ES256 for public-key validation
+without sharing the signing secret.
+
+Q6: "How does your Kafka-based fraud detection read model work?"
+RISK: LOW (this is a strength)
+CURRENT STATE: PaymentEventConsumer builds a local TransactionLog table
+from payment completion events. Fraud rules query this table, not
+transaction-service. This is CQRS and is genuinely smart.
+WHAT YOU NEED TO SAY: Explain the trade-off — eventual consistency means
+fraud check sees the completed transaction's data, not real-time. It cannot
+block, only detect and alert.
+
+Q7: "How does the NEFT batch handle a failure mid-batch?"
+RISK: MEDIUM
+CURRENT STATE: Each transaction in the batch has its own try/catch. Failures
+are marked FAILED individually. But if debit succeeds and credit fails for
+a transaction in the batch, the money is gone (same distributed txn bug).
+The @Transactional on processNeftBatch() does NOT cover HTTP calls to
+account-service.
+
+Q8: "Explain pessimistic vs. optimistic locking in account-service."
+RISK: LOW (this is a strength)
+CURRENT STATE: findWithLockByAccountNumber() uses PESSIMISTIC_WRITE for
+debit/credit/hold (prevents concurrent modification of the same row).
+@Version provides optimistic locking as a safety net for updates that don't
+need a full row lock.
+This is correctly implemented and you should own this answer confidently.
+
+Q9: "Why is there a System.out.println in your JWT authentication filter?"
+RISK: HIGH
+CURRENT STATE: Debug artifact left in production code.
+WHAT TO DO: Remove it before the interview. There is no good answer for
+why production code logs to System.out.
+
+Q10: "I noticed this codebase was converted from an e-commerce project. Walk me through the changes you made."
+RISK: CRITICAL — potentially interview-ending
+CURRENT STATE: The entire project history as a converted e-commerce clone
+is documented in a file sitting in the root directory.
+WHAT TO DO: Delete the file. If asked about conversion, be honest but
+frame it as: "I started from a microservices template I had built earlier
+and redesigned the domain model, services, and business logic for banking.
+The infrastructure and patterns carry over."
+
+================================================================================
+8. FINAL VERDICT
+================================================================================
+
+------------------------------------------------------------------------
+HONEST CTC BAND ASSESSMENT
+------------------------------------------------------------------------
+
+If candidate explains architecture deeply AND knows the gaps cold:
+  12 - 15 LPA
+
+If candidate stumbles on distributed transactions, NEFT window, or daily limits:
+  10 - 12 LPA
+
+If PROJECT_ANALYSIS.txt is found OR System.out.println is noticed first:
+  Interviewer loses confidence. Offer likely drops or disappears.
+
+------------------------------------------------------------------------
+IS THIS "REAL" OR AI-GENERATED?
+------------------------------------------------------------------------
+
+It is in-between. The code quality is clearly above pure AI vibe-code:
+  - Pessimistic locking on balance mutations
+  - AES-256-GCM with correct IV handling
+  - Idempotency filter with Redis
+  - Fraud rule engine with multiple rule types and correct CQRS design
+  - Tests that verify real business edge cases (not just "method was called")
+
+But the tells are visible:
+  - PROJECT_ANALYSIS.txt is a dead giveaway of the conversion
+  - System.out.println debug artifacts not cleaned
+  - NEFT 24x7 is basic RBI knowledge — anyone who genuinely built a banking
+    platform would have discovered this in the first hour of research
+  - The notification service sends nothing
+  - Daily limits seeded but never enforced
+
+An experienced interviewer will form a suspicion within 10 minutes. Whether
+they push on it depends on the individual.
+
+------------------------------------------------------------------------
+TOP 5 THINGS TO FIX BEFORE ANY INTERVIEW
+------------------------------------------------------------------------
+
+1. DELETE PROJECT_ANALYSIS.txt AND PAYSTREAM_BUILD_SUMMARY.txt
+   These files are your single biggest liability. Do this immediately.
+
+2. REMOVE System.out.println FROM JwtAuthenticationFilter.java (lines 22, 33)
+   Replace with log.debug() or remove entirely. This is the first file
+   an interviewer opens in the gateway.
+
+3. FIX NEFT TO BE 24x7
+   Remove NeftWindowValidator or change isWithinWindow() to always return true.
+   Add comment: "NEFT is 24x7 per RBI circular RBI/2019-20/125 (Dec 2019)."
+   Know this fact cold before the interview.
+
+4. ADD DAILY LIMIT ENFORCEMENT IN ACCOUNT-SERVICE debit()
+   Before debiting, look up AccountLimit for the payment mode (passed in
+   AmountRequest), check usedTodayAmount + amount <= dailyLimit, throw
+   DailyLimitExceededException if violated, and increment usedTodayAmount
+   on success. This is one of the most likely interview questions.
+
+5. PREPARE YOUR SAGA ANSWER FOR THE PARTIAL TRANSFER BUG
+   Either add a compensating credit reversal in the catch block of settle()
+   (even best-effort), or have a clear verbal explanation of the gap and
+   exactly how you would fix it using Saga choreography. "I know this is
+   a gap — here is the exact design I would implement" is far better than
+   being caught off guard.
+
+------------------------------------------------------------------------
+WHAT IS GENUINELY STRONG (USE THESE IN EVERY INTERVIEW)
+------------------------------------------------------------------------
+
+- Pessimistic + optimistic locking combination on balance updates
+- AES-256-GCM PII encryption with per-value IV
+- CQRS-style fraud read model built from Kafka events
+- Idempotency filter at gateway layer (Redis, 24h TTL, HTTP 409)
+- Kafka topic provisioning with DLTs (not left to auto-create)
+- Test coverage for real business edge cases in account-service
+- CI/CD pipeline: GitHub Actions + OIDC to AWS + ArgoCD + GitOps
+- Helm generic chart for all 14 services with environment-specific values
+- Network Policy, Istio VirtualService, ArgoCD ApplicationSets — comprehensive K8s
+
+The infrastructure depth is above average for a portfolio project. The core
+service logic has real thought in it. The gaps are fixable. Fix items 1-5
+above and know your architecture cold. That is the honest path to 15 LPA.
+
+================================================================================
+DETAILED FILE REFERENCE (For Review Navigation)
+================================================================================
+
+CRITICAL ISSUES BY FILE:
+
+api-gateway/.../JwtAuthenticationFilter.java:22,33
+  System.out.println in production auth filter
+
+config-repo/application.yml:10
+  Hardcoded JWT secret in plaintext
+
+config-repo/auth-service.yml:7,27,31-32
+  useSSL=false, hardcoded JWT secret, DEBUG security logging
+
+config-repo/account-service.yml:15
+  ddl-auto: update on banking service
+
+upi-service/.../UpiTransactionServiceImpl.java:175-189
+  Partial money transfer bug — no saga compensation
+
+rtgs-service/.../RtgsServiceImpl.java:73-74
+  Same partial money transfer bug
+
+imps-service/.../ImpsServiceImpl.java:73-74
+  Same partial money transfer bug
+
+neft-service/.../NeftBatchScheduler.java:69-80
+  Same partial money transfer bug in batch loop
+
+neft-service/.../NeftWindowValidator.java
+  Enforces window that has not existed since December 2019
+
+rtgs-service/.../RtgsWindowValidator.java:16-18
+  Weekday close 18:00 should be 17:45; Saturday close 13:00 should be 13:45
+
+account-service/.../AccountServiceImpl.java:160-168
+  debit() does not check or update AccountLimit.usedTodayAmount
+
+account-service/.../LimitResetScheduler.java:31
+  findAll() on entire account_limits table loaded into heap at midnight
+
+fraud-detection-service/.../FraudRuleEngineImpl.java:47,60,94,116
+  All checks load full result sets into memory; should use COUNT/SUM queries
+
+PROJECT_ANALYSIS.txt (ROOT)
+  DELETED: was titled with the original e-commerce project name — removed
+
+PAYSTREAM_BUILD_SUMMARY.txt (ROOT)
+  FIXED: infrastructure now uses paystream-cluster throughout
+
+================================================================================
+END OF AUDIT REPORT
+================================================================================

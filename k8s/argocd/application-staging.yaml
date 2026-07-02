@@ -1,0 +1,53 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: paystream-staging
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - service: config-server
+          - service: discovery-server
+          - service: api-gateway
+          - service: auth-service
+          - service: customer-service
+          - service: account-service
+          - service: neft-service
+          - service: rtgs-service
+          - service: imps-service
+          - service: upi-service
+          - service: transaction-service
+          - service: fraud-detection-service
+          - service: notification-service
+          - service: audit-service
+  template:
+    metadata:
+      name: '{{service}}-staging'
+      namespace: argocd
+      annotations:
+        notifications.argoproj.io/subscribe.on-sync-succeeded.slack: paystream-deployments
+        notifications.argoproj.io/subscribe.on-sync-failed.slack: paystream-deployments
+    spec:
+      project: default
+
+      source:
+        repoURL: https://github.com/ranjan-fullstack/paystream-banking-platform.git
+        targetRevision: HEAD
+        path: backend/helm/paystream-service
+        helm:
+          valueFiles:
+            - values.yaml
+            - 'values/{{service}}.yaml'
+            - values-staging.yaml
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: paystream-staging
+
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

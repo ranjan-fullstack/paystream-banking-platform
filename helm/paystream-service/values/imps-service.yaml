@@ -1,0 +1,5 @@
+serviceName: imps-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/imps-service
+  tag: "latest"
+containerPort: 9006

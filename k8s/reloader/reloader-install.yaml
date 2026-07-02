@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Stakater Reloader — automatic pod restart on Secret / ConfigMap change
+#
+# WHY:
+#   External Secrets Operator syncs AWS Secrets Manager → K8s Secret every 1h.
+#   When a secret rotates (DB password, JWT secret, AWS keys), the new value is
+#   written into the K8s Secret but running pods still hold the old value in
+#   their environment. Reloader detects the Secret update and triggers a rolling
+#   restart — no manual `kubectl rollout restart` required.
+#
+# HOW IT WORKS:
+#   Reloader watches Deployments, StatefulSets, DaemonSets, and Argo Rollouts
+#   annotated with:
+#       reloader.stakater.com/auto: "true"
+#   When any referenced Secret or ConfigMap is modified, it patches the
+#   pod template annotation to force a rolling update.
+#
+# INSTALL (run once per cluster, or include in cluster bootstrap):
+#
+#   helm repo add stakater https://stakater.github.io/stakater-charts
+#   helm repo update
+#   helm install reloader stakater/reloader \
+#       --namespace kube-system \
+#       --values k8s/reloader/reloader-install.yaml
+#
+# UPGRADE:
+#   helm upgrade reloader stakater/reloader \
+#       --namespace kube-system \
+#       --values k8s/reloader/reloader-install.yaml
+#
+# VERIFY:
+#   kubectl get pods -n kube-system -l app=reloader
+#   kubectl logs -n kube-system -l app=reloader --tail=50
+#
+# ANNOTATED RESOURCES IN THIS PROJECT:
+#   helm/paystream-service/templates/deployment.yaml (Helm-managed, shared by
+#   all 14 PayStream services — add reloader.stakater.com/auto: "true" to a
+#   service's pod template via its values/<service>.yaml if it needs this.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Helm values for stakater/reloader chart ───────────────────────────────────
+
+reloader:
+  # Watch these resource kinds. Enable Rollout support (requires Argo Rollouts CRD).
+  watchGlobally: false          # Only restart pods whose resources carry the annotation
+
+  # Enable Argo Rollouts support (requires Reloader >= 1.0.0)
+  enableArgoRollouts: true
+
+  # Namespaces to watch — restrict to our application namespaces.
+  # Leave empty to watch all namespaces (cluster-wide RBAC required).
+  namespaceSelector: "paystream,paystream-dev,paystream-staging,paystream-prod"
+
+  # Ignore these namespaces even if they have annotated resources.
+  ignoreNamespaces: "kube-system,kube-public,cert-manager,monitoring,argocd"
+
+  # Resource requests/limits for the Reloader controller pod.
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+
+  # Pod disruption budget — Reloader is not critical path but should stay up.
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Metrics endpoint for Prometheus scraping.
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    additionalLabels:
+      release: prometheus   # matches kube-prometheus-stack default selector
+
+  # Logformat: json is better for Loki/Grafana ingestion.
+  logFormat: json

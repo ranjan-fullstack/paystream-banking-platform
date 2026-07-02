@@ -1,0 +1,819 @@
+asyncapi: '2.6.0'
+
+info:
+  title: PayStream Banking Platform — Kafka Event API
+  version: '1.0.0'
+  description: |
+    AsyncAPI specification for every Apache Kafka event stream in the
+    PayStream Banking Platform — an enterprise inter-bank payment
+    processing system covering NEFT, RTGS, IMPS, and UPI rails.
+
+    ## Delivery Guarantee
+    At-least-once delivery. Producers use `KafkaTemplate<String,String>`
+    with Jackson `ObjectMapper` JSON serialization; consumers commit
+    offsets only after successful processing.
+
+    ## Topic Provisioning
+    Topics are NOT left to Kafka's auto-create-topics default. Each topic
+    is explicitly created with a fixed partition count so partition/
+    replication settings are deterministic across environments:
+      - **dev** (docker-compose, `kafka-topics-init` one-shot container):
+        3 partitions, replication factor 1
+      - **prod** (K8s Job, `k8s/kafka/topics-job.yaml`, against AWS MSK):
+        3 partitions, replication factor 3
+    Every domain topic has a matching `.DLT` (Dead Letter Topic) created
+    alongside it.
+
+    ## Retry & Dead Letter Strategy
+    Consumers retry failed messages **3 times with a 2-second fixed
+    backoff** before routing the message to `<topic>.DLT` via Spring
+    Kafka's `DeadLetterPublishingRecoverer`.
+
+    ## Kafka Schema Evolution
+    All messages are currently **plain JSON strings** (StringSerializer /
+    StringDeserializer). Migration to **Avro + Confluent Schema Registry**
+    is planned for a future phase.
+
+    ## Tracing
+    Producers include `X-Correlation-ID` (from the originating HTTP
+    request's MDC context) as a Kafka record header so traces span
+    HTTP → Kafka → HTTP.
+
+  contact:
+    name: PayStream Backend Team
+    email: rksahu4455@gmail.com
+
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Servers — broker configurations per environment
+# ─────────────────────────────────────────────────────────────────────────────
+servers:
+
+  local:
+    url: 'localhost:9092'
+    protocol: kafka
+    description: |
+      Local development — single-node Kafka started via docker-compose.yml.
+      Topics are created on startup by the `kafka-topics-init` one-shot
+      container. No authentication. Data is non-persistent.
+
+  docker:
+    url: 'kafka:9092'
+    protocol: kafka
+    description: |
+      Docker Compose internal network hostname used by Spring services
+      when running with the `docker` profile.
+
+  production:
+    url: 'b-1.paystream.internal:9092'
+    protocol: kafka
+    description: |
+      AWS MSK (Managed Streaming for Kafka) cluster in ap-south-1.
+      Topics are provisioned by the `paystream-kafka-topics-init` K8s Job
+      (k8s/kafka/topics-job.yaml) with replication factor 3.
+      SASL/TLS authentication required. Secrets stored in AWS Secrets Manager.
+    security:
+      - saslTls: []
+
+defaultContentType: application/json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Channels — one channel per Kafka topic
+# ─────────────────────────────────────────────────────────────────────────────
+channels:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  account.created:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      Published by `account-service` when a new bank account is opened
+      (`POST /api/v1/accounts`). Consumed by `audit-service` to record an
+      immutable audit trail entry.
+    bindings:
+      kafka:
+        topic: account.created
+        partitions: 3
+        replicas: 1   # dev: 1, prod: 3
+    publish:
+      operationId: publishAccountCreated
+      summary: Emitted by account-service when a bank account is opened
+      tags:
+        - name: account-service
+      message:
+        $ref: '#/components/messages/AccountCreatedEvent'
+    subscribe:
+      operationId: consumeAccountCreated
+      summary: Consumed by audit-service for the audit trail
+      tags:
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: audit-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/AccountCreatedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  customer.kyc.updated:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      **Reserved** — provisioned (topic + DLT created in dev/prod) per the
+      platform's topic catalog, but not yet wired to a producer or consumer
+      in this phase. Intended use: `customer-service` publishes this when a
+      customer's KYC status changes (PENDING → VERIFIED / REJECTED), for
+      `audit-service` to pick up.
+    bindings:
+      kafka:
+        topic: customer.kyc.updated
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishKycUpdated
+      summary: Reserved for customer-service — not yet implemented
+      tags:
+        - name: customer-service
+      message:
+        $ref: '#/components/messages/GenericDomainEvent'
+    subscribe:
+      operationId: consumeKycUpdated
+      summary: Reserved for audit-service — not yet implemented
+      tags:
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: audit-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/GenericDomainEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.neft.initiated:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      **Reserved** — provisioned per the platform's topic catalog (intended
+      for a pre-settlement hook: synchronous fraud screening or a
+      transfer-accepted notification before the batch settles), but
+      `neft-service` does not currently publish to it. Today, NEFT only
+      emits `payment.neft.completed` once the batch scheduler settles.
+    bindings:
+      kafka:
+        topic: payment.neft.initiated
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishNeftInitiated
+      summary: Reserved for neft-service — not yet implemented
+      tags:
+        - name: neft-service
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+    subscribe:
+      operationId: consumeNeftInitiated
+      summary: Reserved — no current consumer
+      tags:
+        - name: fraud-detection-service
+      bindings:
+        kafka:
+          groupId: fraud-detection-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.neft.completed:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      Published by `neft-service`'s `NeftBatchScheduler`
+      (`0 0,30 8-19 * * MON-SAT`) when a batch settles. Consumed by
+      `transaction-service` (ledger), `fraud-detection-service` (local
+      read-model + rule evaluation), `notification-service`, and
+      `audit-service`.
+    bindings:
+      kafka:
+        topic: payment.neft.completed
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishNeftCompleted
+      tags:
+        - name: neft-service
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+    subscribe:
+      operationId: consumeNeftCompleted
+      summary: Consumed by transaction-service, fraud-detection-service, notification-service, audit-service
+      tags:
+        - name: transaction-service
+        - name: fraud-detection-service
+        - name: notification-service
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: transaction-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.rtgs.initiated:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      **Reserved** — provisioned per the platform's topic catalog, but
+      `rtgs-service` does not currently publish to it. RTGS settles
+      synchronously within the same request, so today there is no
+      separate "initiated" event — only `payment.rtgs.settled`.
+    bindings:
+      kafka:
+        topic: payment.rtgs.initiated
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishRtgsInitiated
+      summary: Reserved for rtgs-service — not yet implemented
+      tags:
+        - name: rtgs-service
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+    subscribe:
+      operationId: consumeRtgsInitiated
+      summary: Reserved — no current consumer
+      tags:
+        - name: fraud-detection-service
+      bindings:
+        kafka:
+          groupId: fraud-detection-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.rtgs.settled:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      Published by `rtgs-service` immediately on synchronous settlement
+      (RTGS has no batching — real-time gross settlement). Consumed by
+      `transaction-service`, `fraud-detection-service`, `notification-service`,
+      and `audit-service`.
+    bindings:
+      kafka:
+        topic: payment.rtgs.settled
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishRtgsSettled
+      tags:
+        - name: rtgs-service
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+    subscribe:
+      operationId: consumeRtgsSettled
+      tags:
+        - name: transaction-service
+        - name: fraud-detection-service
+        - name: notification-service
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: transaction-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.imps.initiated:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      **Reserved** — provisioned per the platform's topic catalog, but
+      `imps-service` does not currently publish to it. IMPS processes
+      synchronously within the same request, so today there is no
+      separate "initiated" event — only `payment.imps.completed`.
+    bindings:
+      kafka:
+        topic: payment.imps.initiated
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishImpsInitiated
+      summary: Reserved for imps-service — not yet implemented
+      tags:
+        - name: imps-service
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+    subscribe:
+      operationId: consumeImpsInitiated
+      summary: Reserved — no current consumer
+      tags:
+        - name: fraud-detection-service
+      bindings:
+        kafka:
+          groupId: fraud-detection-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.imps.completed:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      Published by `imps-service` on successful 24x7 real-time transfer.
+      Consumed by `transaction-service`, `fraud-detection-service`,
+      `notification-service`, and `audit-service`.
+    bindings:
+      kafka:
+        topic: payment.imps.completed
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishImpsCompleted
+      tags:
+        - name: imps-service
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+    subscribe:
+      operationId: consumeImpsCompleted
+      tags:
+        - name: transaction-service
+        - name: fraud-detection-service
+        - name: notification-service
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: transaction-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.upi.initiated:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      **Reserved** — provisioned per the platform's topic catalog, but
+      `upi-service` does not currently publish to it. PAY/COLLECT requests
+      process synchronously within the same request, so today there is no
+      separate "initiated" event — only `payment.upi.completed`.
+    bindings:
+      kafka:
+        topic: payment.upi.initiated
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishUpiInitiated
+      summary: Reserved for upi-service — not yet implemented
+      tags:
+        - name: upi-service
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+    subscribe:
+      operationId: consumeUpiInitiated
+      summary: Reserved — no current consumer
+      tags:
+        - name: fraud-detection-service
+      bindings:
+        kafka:
+          groupId: fraud-detection-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/PaymentInitiatedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.upi.completed:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      Published by `upi-service` when a UPI PAY/COLLECT/REFUND transaction
+      reaches a terminal SUCCESS state. Consumed by `transaction-service`,
+      `fraud-detection-service`, `notification-service`, and `audit-service`.
+    bindings:
+      kafka:
+        topic: payment.upi.completed
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishUpiCompleted
+      tags:
+        - name: upi-service
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+    subscribe:
+      operationId: consumeUpiCompleted
+      tags:
+        - name: transaction-service
+        - name: fraud-detection-service
+        - name: notification-service
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: transaction-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/TransactionCompletedEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  fraud.alert:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      Published by `fraud-detection-service`'s `FraudRuleEngine` when a
+      transaction matches a fraud rule (velocity check, large-amount
+      threshold, odd-hour transfer, etc). Consumed by `notification-service`
+      (alerts the customer / compliance team) and `audit-service`.
+
+      **Known limitation:** detection is post-hoc (consumes the same
+      `payment.*.initiated` events asynchronously) — it can raise an
+      alert but cannot synchronously block settlement before it happens.
+    bindings:
+      kafka:
+        topic: fraud.alert
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishFraudAlert
+      tags:
+        - name: fraud-detection-service
+      message:
+        $ref: '#/components/messages/FraudAlertEvent'
+    subscribe:
+      operationId: consumeFraudAlert
+      tags:
+        - name: notification-service
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: notification-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/FraudAlertEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  notification.send:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      **Reserved** — provisioned per the platform's topic catalog as a
+      generic notification-dispatch channel for services that need an
+      out-of-band customer notification without coupling to
+      `notification-service`'s internal channel logic. `NotificationEventConsumer`
+      currently listens to the domain-specific topics
+      (`payment.*.completed`, `fraud.alert`, `account.created`) directly —
+      this generic topic has no producer or consumer wired yet.
+    bindings:
+      kafka:
+        topic: notification.send
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishNotificationSend
+      summary: Reserved — no current producer
+      tags:
+        - name: notification-service
+      message:
+        $ref: '#/components/messages/GenericDomainEvent'
+    subscribe:
+      operationId: consumeNotificationSend
+      summary: Reserved — no current consumer
+      tags:
+        - name: notification-service
+      bindings:
+        kafka:
+          groupId: notification-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/GenericDomainEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Dead Letter Topics — one .DLT per domain topic above, same partitioning.
+  # All share the same DLT message contract; documented once here rather
+  # than duplicated per-topic.
+  # ───────────────────────────────────────────────────────────────────────────
+  payment.neft.initiated.DLT:
+    description: Dead Letter Topic for `payment.neft.initiated`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.neft.initiated.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeNeftInitiatedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  payment.neft.completed.DLT:
+    description: Dead Letter Topic for `payment.neft.completed`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.neft.completed.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeNeftCompletedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  payment.rtgs.initiated.DLT:
+    description: Dead Letter Topic for `payment.rtgs.initiated`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.rtgs.initiated.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeRtgsInitiatedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  payment.rtgs.settled.DLT:
+    description: Dead Letter Topic for `payment.rtgs.settled`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.rtgs.settled.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeRtgsSettledDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  payment.imps.initiated.DLT:
+    description: Dead Letter Topic for `payment.imps.initiated`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.imps.initiated.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeImpsInitiatedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  payment.imps.completed.DLT:
+    description: Dead Letter Topic for `payment.imps.completed`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.imps.completed.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeImpsCompletedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  payment.upi.initiated.DLT:
+    description: Dead Letter Topic for `payment.upi.initiated`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.upi.initiated.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeUpiInitiatedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  payment.upi.completed.DLT:
+    description: Dead Letter Topic for `payment.upi.completed`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: payment.upi.completed.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeUpiCompletedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  fraud.alert.DLT:
+    description: Dead Letter Topic for `fraud.alert`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: fraud.alert.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeFraudAlertDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  account.created.DLT:
+    description: Dead Letter Topic for `account.created`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: account.created.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeAccountCreatedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  customer.kyc.updated.DLT:
+    description: Dead Letter Topic for `customer.kyc.updated`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: customer.kyc.updated.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeKycUpdatedDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+  notification.send.DLT:
+    description: Dead Letter Topic for `notification.send`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: notification.send.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeNotificationSendDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Components
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+
+  # ── Messages ────────────────────────────────────────────────────────────────
+  messages:
+
+    PaymentInitiatedEvent:
+      name: PaymentInitiatedEvent
+      title: Payment Initiated Event
+      summary: Emitted when a NEFT/RTGS/IMPS/UPI transfer is accepted, before settlement.
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/withCorrelationId'
+      payload:
+        $ref: '#/components/schemas/PaymentInitiatedEvent'
+
+    TransactionCompletedEvent:
+      name: TransactionCompletedEvent
+      title: Transaction Completed Event
+      summary: Emitted when a payment transaction reaches a terminal (settled/failed) state.
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/withCorrelationId'
+      payload:
+        $ref: '#/components/schemas/TransactionCompletedEvent'
+
+    FraudAlertEvent:
+      name: FraudAlertEvent
+      title: Fraud Alert Event
+      summary: Emitted by fraud-detection-service when a transaction matches a fraud rule.
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/withCorrelationId'
+      payload:
+        $ref: '#/components/schemas/FraudAlertEvent'
+
+    AccountCreatedEvent:
+      name: AccountCreatedEvent
+      title: Account Created Event
+      summary: Emitted by account-service when a new bank account is opened.
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/withCorrelationId'
+      payload:
+        $ref: '#/components/schemas/AccountCreatedEvent'
+
+    GenericDomainEvent:
+      name: GenericDomainEvent
+      title: Generic Domain Event
+      summary: >
+        Loosely-typed envelope used for `customer.kyc.updated` and
+        `notification.send`, which do not yet have dedicated shared DTOs
+        in common-lib.
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/withCorrelationId'
+      payload:
+        type: object
+        additionalProperties: true
+
+    DeadLetterMessage:
+      name: DeadLetterMessage
+      title: Dead Letter Message
+      summary: >
+        Original event payload that exhausted all retry attempts on its
+        source topic. Spring Kafka's `DeadLetterPublishingRecoverer` adds
+        exception context headers automatically.
+      contentType: application/json
+      headers:
+        type: object
+        properties:
+          kafka_dlt-exception-message:
+            type: string
+            description: Exception message from the final failed attempt
+          kafka_dlt-exception-fqcn:
+            type: string
+            description: Fully qualified exception class name
+          kafka_dlt-original-topic:
+            type: string
+            description: The topic this message originally came from
+          kafka_dlt-original-partition:
+            type: integer
+            description: Partition index of the original message
+          kafka_dlt-original-offset:
+            type: integer
+            format: int64
+            description: Offset of the original message
+          kafka_dlt-original-timestamp:
+            type: string
+            format: date-time
+      payload:
+        type: object
+        additionalProperties: true
+
+  # ── Schemas ──────────────────────────────────────────────────────────────────
+  schemas:
+
+    PaymentInitiatedEvent:
+      type: object
+      description: |
+        Shared event DTO from `common-lib`.
+        **Source:** `com.paystream.commonlib.event.PaymentInitiatedEvent`
+      required:
+        - transactionId
+        - sourceAccountNumber
+        - amount
+        - paymentMode
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        sourceAccountNumber:
+          type: string
+          example: '110011223344'
+        destinationAccountNumber:
+          type: string
+          example: '220033445566'
+        amount:
+          type: number
+          format: double
+          minimum: 0
+          example: 25000.00
+        paymentMode:
+          type: string
+          enum: [NEFT, RTGS, IMPS, UPI]
+        initiatedAt:
+          type: string
+          format: date-time
+
+    TransactionCompletedEvent:
+      type: object
+      description: |
+        **Source:** `com.paystream.commonlib.event.TransactionCompletedEvent`
+      required:
+        - transactionId
+        - status
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        utrNumber:
+          type: string
+          description: Unique Transaction Reference number generated on settlement
+          example: 'PSUTR2026062812345678'
+        status:
+          type: string
+          enum: [SUCCESS, FAILED]
+        amount:
+          type: number
+          format: double
+        completedAt:
+          type: string
+          format: date-time
+
+    FraudAlertEvent:
+      type: object
+      description: |
+        **Source:** `com.paystream.commonlib.event.FraudAlertEvent`
+      required:
+        - transactionId
+        - ruleType
+        - alertId
+      properties:
+        alertId:
+          type: string
+          format: uuid
+        transactionId:
+          type: string
+          format: uuid
+        ruleType:
+          type: string
+          example: 'VELOCITY_CHECK'
+        action:
+          type: string
+          enum: [FLAG, ALERT, BLOCK]
+        raisedAt:
+          type: string
+          format: date-time
+
+    AccountCreatedEvent:
+      type: object
+      description: |
+        **Source:** `com.paystream.commonlib.event.AccountCreatedEvent`
+      required:
+        - accountNumber
+        - customerId
+        - accountType
+      properties:
+        accountNumber:
+          type: string
+        customerId:
+          type: string
+          format: uuid
+        accountType:
+          type: string
+          enum: [SAVINGS, CURRENT]
+        openedAt:
+          type: string
+          format: date-time
+
+  # ── Message Traits ───────────────────────────────────────────────────────────
+  messageTraits:
+
+    withCorrelationId:
+      headers:
+        type: object
+        properties:
+          X-Correlation-ID:
+            type: string
+            format: uuid
+            description: End-to-end correlation ID propagated from the HTTP request layer
+
+  # ── Security Schemes ─────────────────────────────────────────────────────────
+  securitySchemes:
+
+    saslTls:
+      type: plain
+      description: |
+        SASL/PLAIN over TLS for AWS MSK production cluster.
+        Credentials stored in AWS Secrets Manager under
+        `paystream/kafka` (keys: `username`, `password`).
+        External Secrets Operator syncs these into K8s Secrets at pod startup.

@@ -1,0 +1,5 @@
+serviceName: upi-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/upi-service
+  tag: "latest"
+containerPort: 9007

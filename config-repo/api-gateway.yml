@@ -1,0 +1,193 @@
+﻿server:
+  port: 9000
+
+spring:
+  application:
+    name: api-gateway
+
+  # ------------------------------------------
+  # Redis (for RequestRateLimiter)
+  # ------------------------------------------
+  data:
+    redis:
+      host: localhost
+      # host: redis-sentinel (docker)
+      port: 6379
+
+  cloud:
+    gateway:
+
+      # ------------------------------------------
+      # GLOBAL CORS
+      # ------------------------------------------
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+
+      # ------------------------------------------
+      # RATE LIMITING (applied to all routes)
+      # ------------------------------------------
+      default-filters:
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter.replenishRate: 10    # tokens added per second
+            redis-rate-limiter.burstCapacity: 20    # max tokens in bucket
+            redis-rate-limiter.requestedTokens: 1
+            key-resolver: "#{@ipKeyResolver}"
+
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+
+      routes:
+
+        # ------------------------------------------
+        # AUTH SERVICE (PUBLIC - no JWT required)
+        # ------------------------------------------
+        - id: auth-service
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth/v1/**
+
+        # ------------------------------------------
+        # CUSTOMER SERVICE - KYC / customer profile
+        # ------------------------------------------
+        - id: customer-service
+          uri: lb://customer-service
+          predicates:
+            - Path=/api/v1/customers/**
+
+        # ------------------------------------------
+        # ACCOUNT SERVICE - bank accounts, balances, limits
+        # ------------------------------------------
+        - id: account-service
+          uri: lb://account-service
+          predicates:
+            - Path=/api/v1/accounts/**
+
+        # ------------------------------------------
+        # NEFT SERVICE
+        # ------------------------------------------
+        - id: neft-service
+          uri: lb://neft-service
+          predicates:
+            - Path=/api/v1/neft/**
+
+        # ------------------------------------------
+        # RTGS SERVICE
+        # ------------------------------------------
+        - id: rtgs-service
+          uri: lb://rtgs-service
+          predicates:
+            - Path=/api/v1/rtgs/**
+
+        # ------------------------------------------
+        # IMPS SERVICE
+        # ------------------------------------------
+        - id: imps-service
+          uri: lb://imps-service
+          predicates:
+            - Path=/api/v1/imps/**
+
+        # ------------------------------------------
+        # UPI SERVICE
+        # ------------------------------------------
+        - id: upi-service
+          uri: lb://upi-service
+          predicates:
+            - Path=/api/v1/upi/**
+
+        # ------------------------------------------
+        # TRANSACTION SERVICE - central ledger
+        # ------------------------------------------
+        - id: transaction-service
+          uri: lb://transaction-service
+          predicates:
+            - Path=/api/v1/transactions/**
+
+        # ------------------------------------------
+        # FRAUD DETECTION SERVICE
+        # ------------------------------------------
+        - id: fraud-detection-service
+          uri: lb://fraud-detection-service
+          predicates:
+            - Path=/api/v1/fraud/**
+
+        # ------------------------------------------
+        # NOTIFICATION SERVICE
+        # ------------------------------------------
+        - id: notification-service
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/v1/notifications/**
+
+        # ------------------------------------------
+        # AUDIT SERVICE
+        # ------------------------------------------
+        - id: audit-service
+          uri: lb://audit-service
+          predicates:
+            - Path=/api/v1/audit/**
+
+        # ------------------------------------------
+        # INTERNAL ENDPOINTS (API-key protected by
+        # ApiKeyFilter, not JWT) - service-to-service
+        # calls such as account validate/debit/credit
+        # ------------------------------------------
+        - id: account-service-internal
+          uri: lb://account-service
+          predicates:
+            - Path=/internal/accounts/**
+
+# ------------------------------------------
+# EUREKA
+# ------------------------------------------
+eureka:
+  client:
+    register-with-eureka: true
+    fetch-registry: true
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+      #defaultZone: http://discovery-server:8761/eureka/
+
+# ------------------------------------------
+# JWT RS256 KEYSTORE (public key for verification)
+# ------------------------------------------
+jwt:
+  keystore:
+    path: classpath:paystream-jwt.jks
+    store-password: ${JWT_KEYSTORE_PASSWORD:paystream-keystore-password}
+    key-alias: jwt-signing-key
+
+# ------------------------------------------
+# API KEY CONFIG
+# ------------------------------------------
+api:
+  key:
+    value: ${API_KEY:paystream-internal-key}
+
+# ------------------------------------------
+# ACTUATOR
+# ------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,busrefresh
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans

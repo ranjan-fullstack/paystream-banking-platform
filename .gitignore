@@ -1,0 +1,42 @@
+# Maven build output
+**/target/
+*.class
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Local file uploads (not committed — stored in S3 in production)
+uploads/
+uploads_v2/
+
+# JVM crash dumps
+hs_err_pid*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit real values
+*.env
+.env
+
+# Logs
+*.log
+logs/
+
+# Terraform — never commit provider binaries or local state
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+crash.log
+crash.*.log
+tfplan
+*.tfplan
+*.pem

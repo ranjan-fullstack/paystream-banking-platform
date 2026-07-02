@@ -1,0 +1,77 @@
+groups:
+
+  # ─────────────────────────────────────────────────────────────
+  # SLO: every PayStream service must maintain < 1% error rate
+  # SLO: P99 latency must stay below 2 seconds
+  # SLO: service availability must be >= 99.9%
+  #
+  # Generic across all PayStream services — matched by the `application`
+  # label every Spring Boot Actuator metric carries (set via
+  # spring.application.name in each service's application.yml).
+  # ─────────────────────────────────────────────────────────────
+  - name: paystream-service-slos
+    rules:
+
+      # Error rate > 1% over 5 minutes → SLO breach
+      - alert: PayStreamServiceHighErrorRate
+        expr: |
+          sum by (application) (
+            rate(http_server_requests_seconds_count{status=~"5.."}[5m])
+          )
+          /
+          sum by (application) (
+            rate(http_server_requests_seconds_count[5m])
+          ) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "🔴 {{ $labels.application }} error rate > 1% (SLO breach)"
+          description: "Current error rate: {{ $value | humanizePercentage }}"
+
+      # P99 latency > 2s over 5 minutes → SLO breach
+      - alert: PayStreamServiceHighLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum by (application, le) (
+              rate(http_server_requests_seconds_bucket[5m])
+            )
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "🟡 {{ $labels.application }} P99 latency > 2s"
+          description: "P99 latency: {{ $value | humanizeDuration }}"
+
+      # Any scrape target completely down (covers every *-service-local job
+      # defined in prometheus.yml)
+      - alert: PayStreamServiceDown
+        expr: up{job=~".+-service-local|.+-server-local"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "🔴 {{ $labels.job }} is DOWN"
+          description: "Instance {{ $labels.instance }} has been unreachable for > 1 minute"
+
+  # ─────────────────────────────────────────────────────────────
+  # JVM health alerts — generic across all PayStream services
+  # ─────────────────────────────────────────────────────────────
+  - name: paystream-service-jvm
+    rules:
+
+      # JVM heap > 85%
+      - alert: PayStreamServiceHighHeapUsage
+        expr: |
+          jvm_memory_used_bytes{area="heap"}
+          /
+          jvm_memory_max_bytes{area="heap"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "🟡 {{ $labels.application }} JVM heap usage > 85%"

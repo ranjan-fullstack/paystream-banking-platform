@@ -1,0 +1,136 @@
+name: CD — Emergency Manual Deploy
+
+# Normal flow (automated via ci.yml):
+#   push to main → build → scan → ECR push (per service) → Helm tag update → ArgoCD sync
+#
+# Use THIS workflow only for:
+#   - Hotfixes that need to bypass the full pipeline
+#   - Rolling back a single service to a previous image SHA
+#   - Force-syncing ArgoCD after a drift
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "PayStream service to deploy"
+        required: true
+        type: choice
+        options:
+          - config-server
+          - discovery-server
+          - api-gateway
+          - auth-service
+          - customer-service
+          - account-service
+          - neft-service
+          - rtgs-service
+          - imps-service
+          - upi-service
+          - transaction-service
+          - fraud-detection-service
+          - notification-service
+          - audit-service
+      image_tag:
+        description: "Image SHA or tag to deploy (leave empty to use latest)"
+        required: false
+        default: "latest"
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, production]
+      reason:
+        description: "Reason for manual deploy (audit trail)"
+        required: true
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  AWS_REGION: ap-south-1
+  EKS_CLUSTER: paystream-cluster
+
+jobs:
+  manual-deploy:
+    name: Manual Deploy (${{ github.event.inputs.service }} → ${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Audit log
+        run: |
+          echo "=============================="
+          echo "Manual deploy triggered"
+          echo "Actor:       ${{ github.actor }}"
+          echo "Service:     ${{ github.event.inputs.service }}"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Image tag:   ${{ github.event.inputs.image_tag }}"
+          echo "Reason:      ${{ github.event.inputs.reason }}"
+          echo "Commit:      ${{ github.sha }}"
+          echo "=============================="
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER
+
+      - name: Install yq
+        run: |
+          wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          chmod +x /usr/local/bin/yq
+
+      - name: Update Helm value for the target service
+        run: |
+          TARGET="${{ github.event.inputs.image_tag }}"
+          SERVICE="${{ github.event.inputs.service }}"
+          yq -i ".image.tag = \"$TARGET\"" "helm/paystream-service/values/${SERVICE}.yaml"
+
+      - name: Commit tag override
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "helm/paystream-service/values/${{ github.event.inputs.service }}.yaml"
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "hotfix(deploy): manual deploy ${{ github.event.inputs.service }}:${{ github.event.inputs.image_tag }} to ${{ github.event.inputs.environment }} by ${{ github.actor }} [skip ci]"
+          git push
+
+      - name: Install ArgoCD CLI
+        run: |
+          curl -sSL -o /usr/local/bin/argocd \
+            https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x /usr/local/bin/argocd
+
+      - name: Force ArgoCD sync
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          # ArgoCD Application names / namespaces use the short "prod" suffix
+          # (see k8s/argocd/*.yaml), not the GitHub Environment name "production".
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_SUFFIX="staging"
+          [ "$ENV" = "production" ] && ENV_SUFFIX="prod"
+          APP="${SERVICE}-${ENV_SUFFIX}"
+          argocd app sync $APP \
+            --server ${{ secrets.ARGOCD_SERVER }} \
+            --auth-token ${{ secrets.ARGOCD_TOKEN }} \
+            --insecure \
+            --force \
+            --timeout 300
+
+      - name: Wait for rollout
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_SUFFIX="staging"
+          [ "$ENV" = "production" ] && ENV_SUFFIX="prod"
+          NS="paystream-${ENV_SUFFIX}"
+          kubectl rollout status deployment/${SERVICE} -n $NS --timeout=10m

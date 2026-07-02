@@ -1,0 +1,465 @@
+openapi: 3.0.3
+info:
+  title: PayStream Account Service
+  version: 1.0.0
+  description: |
+    Manages bank account lifecycle: opening accounts, status changes, balances and
+    per-payment-mode transaction limits. All endpoints require a Bearer JWT (enforced
+    by the API Gateway). GET endpoints are open to any authenticated role; POST/PUT
+    endpoints are restricted to ADMIN or TELLER (enforced at the gateway).
+servers:
+  - url: http://localhost:9003
+    description: account-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: Account
+  - name: Limits
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/accounts:
+    post:
+      tags: [Account]
+      summary: Open a new account
+      description: Restricted to ADMIN or TELLER roles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAccountRequest'
+            example:
+              customerId: CUST00000001
+              accountType: SAVINGS
+              branchCode: BR0001
+              nomineeName: John Doe
+      responses:
+        '201':
+          description: Account opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+              example:
+                id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                accountNumber: '1234567890123456'
+                ifscCode: PYST0001234
+                accountType: SAVINGS
+                balance: 0.00
+                availableBalance: 0.00
+                currency: INR
+                status: ACTIVE
+                customerId: CUST00000001
+                branchCode: BR0001
+                nomineeName: John Doe
+                createdAt: '2026-06-28T10:00:00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/accounts/{accountId}:
+    get:
+      tags: [Account]
+      summary: Get account by internal ID
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Account found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/accounts/number/{accountNumber}:
+    get:
+      tags: [Account]
+      summary: Get account by account number
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: '1234567890123456'
+      responses:
+        '200':
+          description: Account found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/accounts/customer/{customerId}:
+    get:
+      tags: [Account]
+      summary: List all accounts owned by a customer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUST00000001
+      responses:
+        '200':
+          description: List of accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AccountResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/accounts/{accountId}/status:
+    put:
+      tags: [Account]
+      summary: Update account status
+      description: Restricted to ADMIN or TELLER roles.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountStatusUpdateRequest'
+            example:
+              status: FROZEN
+              reason: Suspicious activity reported by customer
+      responses:
+        '200':
+          description: Account status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Account is not in a state that allows this transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 422, error: ACCOUNT_NOT_ACTIVE, message: 'Account is CLOSED and cannot change status' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/accounts/{accountId}/balance:
+    get:
+      tags: [Account]
+      summary: Get account balance
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+              example:
+                accountNumber: '1234567890123456'
+                balance: 50000.00
+                availableBalance: 48000.00
+                holdAmount: 2000.00
+                currency: INR
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/accounts/{accountId}/limits:
+    get:
+      tags: [Limits]
+      summary: Get per-payment-mode transaction limits for an account
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: List of limits
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AccountLimitResponse'
+              example:
+                - id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                  transactionType: NEFT
+                  dailyLimit: 1000000.00
+                  perTransactionLimit: 200000.00
+                  usedTodayAmount: 15000.00
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags: [Limits]
+      summary: Update a transaction limit for an account
+      description: Restricted to ADMIN or TELLER roles.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountLimitUpdateRequest'
+            example:
+              transactionType: NEFT
+              dailyLimit: 1500000.00
+              perTransactionLimit: 250000.00
+      responses:
+        '200':
+          description: Limit updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountLimitResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+  schemas:
+    AccountType:
+      type: string
+      enum: [SAVINGS, CURRENT, SALARY, NRI]
+    AccountStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, FROZEN, CLOSED]
+    PaymentMode:
+      type: string
+      enum: [NEFT, RTGS, IMPS, UPI]
+    OpenAccountRequest:
+      type: object
+      required: [customerId, accountType, branchCode]
+      properties:
+        customerId:
+          type: string
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        branchCode:
+          type: string
+        nomineeName:
+          type: string
+    AccountResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        accountNumber:
+          type: string
+        ifscCode:
+          type: string
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        balance:
+          type: number
+          format: double
+        availableBalance:
+          type: number
+          format: double
+        currency:
+          type: string
+        status:
+          $ref: '#/components/schemas/AccountStatus'
+        customerId:
+          type: string
+        branchCode:
+          type: string
+        nomineeName:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    AccountStatusUpdateRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/AccountStatus'
+        reason:
+          type: string
+    BalanceResponse:
+      type: object
+      properties:
+        accountNumber:
+          type: string
+        balance:
+          type: number
+          format: double
+        availableBalance:
+          type: number
+          format: double
+        holdAmount:
+          type: number
+          format: double
+        currency:
+          type: string
+    AccountLimitResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        transactionType:
+          $ref: '#/components/schemas/PaymentMode'
+        dailyLimit:
+          type: number
+          format: double
+        perTransactionLimit:
+          type: number
+          format: double
+        usedTodayAmount:
+          type: number
+          format: double
+    AccountLimitUpdateRequest:
+      type: object
+      required: [transactionType, dailyLimit, perTransactionLimit]
+      properties:
+        transactionType:
+          $ref: '#/components/schemas/PaymentMode'
+        dailyLimit:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+        perTransactionLimit:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 400, error: VALIDATION_FAILED, message: 'dailyLimit must be positive' }
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted (POST/PUT require ADMIN or TELLER)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Role CUSTOMER is not permitted to perform this action' }
+    NotFound:
+      description: Account not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'Account not found' }
+    UnprocessableEntity:
+      description: Business rule violation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 422, error: ACCOUNT_NOT_ACTIVE, message: 'Account is not active' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

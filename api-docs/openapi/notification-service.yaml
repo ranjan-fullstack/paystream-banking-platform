@@ -1,0 +1,134 @@
+openapi: 3.0.3
+info:
+  title: PayStream Notification Service
+  version: 1.0.0
+  description: |
+    Read-only service exposing the SMS/Email notification history sent to customers
+    (e.g. transfer confirmations, fraud alerts). All endpoints require a Bearer JWT
+    when accessed through the API Gateway.
+servers:
+  - url: http://localhost:9010
+    description: notification-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: Notifications
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/notifications/customer/{customerId}:
+    get:
+      tags: [Notifications]
+      summary: Get all notifications sent to a customer
+      description: Returns all notifications for the customer, ordered by sentAt descending. No pagination.
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUST00000001
+      responses:
+        '200':
+          description: List of notifications (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationResponse'
+              example:
+                - id: 1001
+                  customerId: CUST00000001
+                  channel: SMS
+                  message: 'INR 25,000.00 debited from A/c XX3456 towards NEFT to John Smith. Ref NEFT2026062800001.'
+                  status: SENT
+                  sentAt: '2026-06-28T10:30:06'
+                  referenceId: NEFT2026062800001
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    NotificationChannel:
+      type: string
+      enum: [SMS, EMAIL]
+    NotificationStatus:
+      type: string
+      enum: [SENT, FAILED]
+    NotificationResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        customerId:
+          type: string
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+        message:
+          type: string
+          maxLength: 1000
+        status:
+          $ref: '#/components/schemas/NotificationStatus'
+        sentAt:
+          type: string
+          format: date-time
+        referenceId:
+          type: string
+          nullable: true
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Customer has no notifications / customer not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'Customer not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

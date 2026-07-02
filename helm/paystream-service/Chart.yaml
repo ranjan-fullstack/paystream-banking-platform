@@ -1,0 +1,10 @@
+apiVersion: v2
+name: paystream-service
+description: >
+  Generic Helm chart for any PayStream Banking Platform microservice.
+  One chart, parameterized per service via values/<service>.yaml,
+  reused across all 14 deployable services and three environments
+  (dev/staging/prod) via -f values-<env>.yaml.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

@@ -1,0 +1,30 @@
+# Representative template — replicate this DestinationRule (name + host swapped)
+# for each of the other 13 PayStream services once Istio sidecar injection is
+# enabled for their namespace.
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: account-service
+  namespace: paystream-prod
+spec:
+  host: account-service
+
+  # mTLS — all service-to-service calls encrypted automatically
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL         # Mutual TLS between services
+
+    # Connection pool — prevent one slow service from killing everything
+    connectionPool:
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+      tcp:
+        maxConnections: 100
+
+    # Outlier detection — circuit breaker at infrastructure level
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50     # Eject max 50% of pods to keep some available

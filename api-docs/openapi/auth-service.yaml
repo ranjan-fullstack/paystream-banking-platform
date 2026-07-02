@@ -1,0 +1,253 @@
+openapi: 3.0.3
+info:
+  title: PayStream Auth Service
+  version: 1.0.0
+  description: |
+    Issues and refreshes JWT access/refresh tokens for the PayStream Banking Platform.
+    All endpoints in this service are public (no Bearer token required) since they are
+    the entry point for obtaining a token. Tokens issued here carry a `role` claim
+    (CUSTOMER | ADMIN | TELLER | COMPLIANCE_OFFICER | FRAUD_ANALYST) that downstream
+    services and the API Gateway use for authorization.
+servers:
+  - url: http://localhost:9005
+    description: auth-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway (/auth/v1/** is publicly routed, unauthenticated)
+
+tags:
+  - name: Auth
+    description: Registration, login and token refresh
+
+paths:
+  /auth/v1/register:
+    post:
+      tags: [Auth]
+      summary: Register a new platform user
+      description: Creates a login identity (username/password/role) used to obtain JWTs. This is distinct from customer onboarding (see customer-service).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              username: jdoe
+              password: P@ssw0rd123
+              role: CUSTOMER
+      responses:
+        '200':
+          description: User registered successfully
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: User registered successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          description: Username already exists or unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-06-28T10:00:00Z'
+                status: 500
+                error: INTERNAL_SERVER_ERROR
+                message: Username already exists
+
+  /auth/v1/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate and obtain JWT tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              username: jdoe
+              password: P@ssw0rd123
+      responses:
+        '200':
+          description: Authenticated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqZG9lIiwicm9sZSI6IkNVU1RPTUVSIn0.signature
+                refreshToken: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqZG9lIiwidHlwZSI6InJlZnJlc2gifQ.signature
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          description: User not found or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-06-28T10:00:00Z'
+                status: 500
+                error: INTERNAL_SERVER_ERROR
+                message: Invalid credentials
+
+  /auth/v1/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+            example:
+              refreshToken: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqZG9lIiwidHlwZSI6InJlZnJlc2gifQ.signature
+      responses:
+        '200':
+          description: New access token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqZG9lIiwicm9sZSI6IkNVU1RPTUVSIn0.newsignature
+                refreshToken: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqZG9lIiwidHlwZSI6InJlZnJlc2gifQ.signature
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          description: Refresh token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-06-28T10:00:00Z'
+                status: 500
+                error: INTERNAL_SERVER_ERROR
+                message: Invalid or expired refresh token
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Role:
+      type: string
+      enum: [CUSTOMER, ADMIN, TELLER, COMPLIANCE_OFFICER, FRAUD_ANALYST]
+    RegisterRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username:
+          type: string
+          example: jdoe
+        password:
+          type: string
+          format: password
+          example: P@ssw0rd123
+        role:
+          $ref: '#/components/schemas/Role'
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: jdoe
+        password:
+          type: string
+          format: password
+          example: P@ssw0rd123
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-06-28T10:00:00Z'
+            status: 400
+            error: VALIDATION_FAILED
+            message: username must not be blank
+    Unauthorized:
+      description: Missing or invalid credentials/token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-06-28T10:00:00Z'
+            status: 401
+            error: UNAUTHORIZED
+            message: Invalid credentials
+    Forbidden:
+      description: Caller is not permitted to perform this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-06-28T10:00:00Z'
+            status: 403
+            error: FORBIDDEN
+            message: Insufficient permissions
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-06-28T10:00:00Z'
+            status: 404
+            error: NOT_FOUND
+            message: User not found

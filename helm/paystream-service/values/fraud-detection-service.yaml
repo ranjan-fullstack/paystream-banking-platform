@@ -1,0 +1,5 @@
+serviceName: fraud-detection-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/fraud-detection-service
+  tag: "latest"
+containerPort: 9009

@@ -1,0 +1,62 @@
+# Defaults shared by every PayStream service. Overridden per-service by
+# values/<service>.yaml and per-environment by values-<dev|staging|prod>.yaml.
+# Merge order in `helm install/upgrade`:
+#   -f values.yaml (this file, implicit)
+#   -f values/<service>.yaml   (serviceName, image, containerPort)
+#   -f values-<env>.yaml       (replicaCount, resources, namespace)
+
+serviceName: ""
+namespace: paystream-dev
+
+replicaCount: 1
+
+image:
+  repository: ""
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Only api-gateway sets ingress.enabled=true (it's the single externally
+# reachable entrypoint — every other service is ClusterIP-only, reached
+# through Eureka + the gateway).
+ingress:
+  enabled: false
+  host: ""
+  path: /
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 384Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  path: /actuator/health
+  initialDelaySeconds: 30
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+env:
+  springProfile: docker
+
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1

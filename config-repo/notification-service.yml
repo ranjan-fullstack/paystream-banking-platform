@@ -1,0 +1,34 @@
+﻿server:
+  port: 9010
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/paystream_notifications?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    #url: jdbc:mysql://mysql:3306/paystream_notifications?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: ${NOTIFICATION_DB_USERNAME}
+    password: ${NOTIFICATION_DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    #bootstrap-servers: kafka:9092
+    consumer:
+      group-id: notification-service-group
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,busrefresh
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans
