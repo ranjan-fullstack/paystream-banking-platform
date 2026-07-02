@@ -1,0 +1,389 @@
+openapi: 3.0.3
+info:
+  title: PayStream AI Service
+  version: 1.0.0
+  description: |
+    AI layer for the PayStream Banking Platform — LLM-based fraud detection,
+    a LangChain ReAct banking agent, and RAG-grounded financial advisory.
+    Backed by a local Ollama (llama3.1 + nomic-embed-text) instance and a
+    local, persistent ChromaDB vector store.
+
+    Unlike the other PayStream services, `ai-service` is a standalone
+    Python/FastAPI application — it is not a Spring Boot module, does not
+    register with Eureka, and (today) has no bearer-JWT requirement of its
+    own; it is intended to sit behind `api-gateway` or be called directly in
+    development. See `docs/asyncapi.yml`'s `ai.fraud.alert` channel for the
+    (reserved, not-yet-wired) async fan-out counterpart to
+    `POST /api/v1/ai/fraud/analyze`.
+servers:
+  - url: http://localhost:9013
+    description: ai-service (direct)
+
+tags:
+  - name: Fraud Detection
+  - name: Banking Agent
+  - name: Financial Advisory
+
+paths:
+  /api/v1/ai/fraud/analyze:
+    post:
+      tags: [Fraud Detection]
+      summary: Analyze a transaction for fraud risk using an LLM grounded in RBI guidelines
+      description: |
+        Retrieves relevant RBI fraud-prevention guidance via RAG, prompts
+        the LLM with the transaction and recent history, and returns a
+        structured risk assessment. Complements (does not replace) the
+        rule-based `fraud-detection-service`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FraudAnalysisRequest'
+            example:
+              transaction_reference: NEFT20260101001
+              account_number: '1234567890123456'
+              amount: 950000
+              payment_mode: NEFT
+              beneficiary_account: '9876543210987654'
+              beneficiary_ifsc: HDFC0001234
+              transaction_time: '2026-01-01T23:00:00'
+              recent_transactions: []
+              customer_risk_rating: HIGH
+      responses:
+        '200':
+          description: Fraud risk assessment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudAnalysisResponse'
+              example:
+                transaction_reference: NEFT20260101001
+                risk_level: HIGH
+                risk_score: 82.0
+                fraud_indicators:
+                  - 'ODD_HOURS: NEFT initiated at 23:00'
+                  - 'Elevated customer risk rating (HIGH)'
+                recommendation: REVIEW
+                explanation: >-
+                  This NEFT transfer was initiated at 23:00, outside typical
+                  business hours, by a customer already flagged HIGH risk.
+                  While the amount is within NEFT limits, the combination of
+                  odd-hour timing and risk rating warrants manual review
+                  before settlement.
+                rag_context_used:
+                  - 'Odd-hour transfers ... late at night (e.g., after 11 PM) are statistically over-represented in fraud cases...'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/ai/fraud/health:
+    get:
+      tags: [Fraud Detection]
+      summary: Health check for the fraud AI subsystem
+      responses:
+        '200':
+          description: Service and model status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  model:
+                    type: string
+                    example: llama3.1
+
+  /api/v1/ai/agent/chat:
+    post:
+      tags: [Banking Agent]
+      summary: Chat with the PayStream AI banking agent
+      description: |
+        Runs a LangChain ReAct agent with tools to look up account balances,
+        transaction history, payment status, and RBI/NPCI guidelines. If the
+        query is detected as a live payment-initiation instruction (not a
+        question), the agent is bypassed and the response is returned with
+        `requires_confirmation: true` — no tool call and no transfer are
+        ever made without explicit customer confirmation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRequest'
+            example:
+              customer_id: CIF001234
+              account_number: '1234567890123456'
+              query: What is the maximum amount I can send via UPI?
+              conversation_history: []
+      responses:
+        '200':
+          description: Agent response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+              example:
+                response: >-
+                  The maximum amount per UPI transaction is Rs 1,00,000, per
+                  NPCI guidelines. Your daily UPI limit is also Rs 1,00,000.
+                actions_taken:
+                  - 'query_rbi_knowledge({"query": "UPI transaction limit"})'
+                tools_used:
+                  - query_rbi_knowledge
+                requires_confirmation: false
+                confirmation_details: null
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/ai/agent/conversation/{customerId}:
+    delete:
+      tags: [Banking Agent]
+      summary: Clear a customer's in-memory conversation history
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CIF001234
+      responses:
+        '200':
+          description: Conversation cleared (or was already empty)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  customer_id:
+                    type: string
+                  cleared:
+                    type: boolean
+
+  /api/v1/ai/advisory/advice:
+    post:
+      tags: [Financial Advisory]
+      summary: Get personalized financial advice grounded in RBI guidelines and spending history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvisoryRequest'
+            example:
+              customer_id: CIF001234
+              account_number: '1234567890123456'
+              query: Why was my RTGS rejected?
+              transaction_history: []
+              account_balance: 250000.0
+      responses:
+        '200':
+          description: Financial advice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvisoryResponse'
+              example:
+                advice: >-
+                  Your RTGS transfer was most likely rejected because the
+                  amount was below the RBI-mandated minimum of Rs 2,00,000,
+                  or because it was submitted outside RTGS processing hours
+                  (Mon-Fri 07:00-17:45, Sat 07:00-13:45). For amounts below
+                  Rs 2,00,000, use IMPS or NEFT instead.
+                insights:
+                  - 'NEFT: 4 transactions, total Rs 45000.00, average Rs 11250.00'
+                recommended_payment_rail: RTGS
+                rag_sources:
+                  - 'RTGS rejection reasons... Amount below the Rs 2,00,000 regulatory minimum...'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  schemas:
+    PaymentMode:
+      type: string
+      enum: [NEFT, RTGS, IMPS, UPI]
+    RiskLevel:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+
+    FraudAnalysisRequest:
+      type: object
+      required:
+        - transaction_reference
+        - account_number
+        - amount
+        - payment_mode
+        - beneficiary_account
+        - transaction_time
+      properties:
+        transaction_reference:
+          type: string
+        account_number:
+          type: string
+        amount:
+          type: number
+          format: double
+        payment_mode:
+          $ref: '#/components/schemas/PaymentMode'
+        beneficiary_account:
+          type: string
+        beneficiary_ifsc:
+          type: string
+          nullable: true
+        transaction_time:
+          type: string
+          format: date-time
+        recent_transactions:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          default: []
+        customer_risk_rating:
+          type: string
+          default: LOW
+
+    FraudAnalysisResponse:
+      type: object
+      properties:
+        transaction_reference:
+          type: string
+        risk_level:
+          $ref: '#/components/schemas/RiskLevel'
+        risk_score:
+          type: number
+          format: double
+        fraud_indicators:
+          type: array
+          items:
+            type: string
+        recommendation:
+          type: string
+          enum: [APPROVE, REVIEW, BLOCK]
+        explanation:
+          type: string
+        rag_context_used:
+          type: array
+          items:
+            type: string
+
+    AgentRequest:
+      type: object
+      required:
+        - customer_id
+        - account_number
+        - query
+      properties:
+        customer_id:
+          type: string
+        account_number:
+          type: string
+        query:
+          type: string
+        conversation_history:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          default: []
+
+    AgentResponse:
+      type: object
+      properties:
+        response:
+          type: string
+        actions_taken:
+          type: array
+          items:
+            type: string
+        tools_used:
+          type: array
+          items:
+            type: string
+        requires_confirmation:
+          type: boolean
+          default: false
+        confirmation_details:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    AdvisoryRequest:
+      type: object
+      required:
+        - customer_id
+        - account_number
+        - query
+      properties:
+        customer_id:
+          type: string
+        account_number:
+          type: string
+        query:
+          type: string
+        transaction_history:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          default: []
+        account_balance:
+          type: number
+          format: double
+          default: 0.0
+
+    AdvisoryResponse:
+      type: object
+      properties:
+        advice:
+          type: string
+        insights:
+          type: array
+          items:
+            type: string
+        recommended_payment_rail:
+          type: string
+          nullable: true
+          enum: [NEFT, RTGS, IMPS, UPI]
+        rag_sources:
+          type: array
+          items:
+            type: string
+
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+
+  responses:
+    ValidationError:
+      description: Request failed schema validation
+      content:
+        application/json:
+          schema:
+            type: object
+            description: FastAPI/Pydantic validation error envelope
+            additionalProperties: true
+    InternalServerError:
+      description: Unexpected server error (e.g., Ollama unreachable, LLM response unparsable)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-01-01T00:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Fraud analysis failed: connection refused' }

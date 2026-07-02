@@ -1,0 +1,62 @@
+RBI/NPCI GUIDELINES: UNIFIED PAYMENTS INTERFACE (UPI)
+
+1. AVAILABILITY
+UPI, built and operated by NPCI, is available 24x7x365, including bank
+holidays. UPI is a real-time payment system that enables inter-bank
+transactions instantly using a Virtual Payment Address (VPA), without
+requiring the payer to share bank account details or IFSC.
+
+2. TRANSACTION LIMITS
+- Minimum amount: Re 1.
+- Maximum amount: Rs 1,00,000 (Rs 1 lakh) per transaction for most P2P and
+  P2M use cases (certain categories such as capital markets, IPO
+  subscription via UPI, insurance, and select verified merchants have
+  higher NPCI-approved limits, but this platform enforces the standard
+  Rs 1,00,000 per-transaction ceiling).
+- Daily limit: Rs 1,00,000 in aggregate per customer per day across UPI
+  transactions on this platform, in line with standard NPCI guidance for
+  retail UPI usage (banks may independently configure a higher daily cap,
+  typically up to 20 transactions or Rs 1 lakh, whichever comes first, for
+  new payees within 24 hours of registration as an additional fraud
+  control).
+
+3. VPA (VIRTUAL PAYMENT ADDRESS) FORMAT
+A VPA takes the form:
+  <handle>@<bankhandle>
+e.g., ranjan.kumar@paystream, 9876543210@ybl, customer1@oksbi. The VPA
+abstracts the underlying bank account and IFSC, allowing users to transact
+using a human-readable identifier that can be mapped, re-mapped, or ported
+across devices/banks without changing the account number itself.
+
+4. UPI PIN
+The UPI PIN is a 4- or 6-digit numeric secret set by the customer at
+registration, required to authorize every PAY transaction (and optionally
+COLLECT approvals). On this platform, UPI PINs are never stored in
+plaintext — they are hashed using BCrypt before persistence, and PIN
+verification is performed by comparing the hash, never the raw value.
+Three consecutive incorrect PIN attempts should trigger a temporary
+transaction block per standard NPCI risk practice.
+
+5. TRANSACTION TYPES
+- PAY: A push transaction where the payer initiates a transfer to a
+  beneficiary VPA.
+- COLLECT: A pull request where the payee requests payment from a payer's
+  VPA; the payer must approve (with UPI PIN) or decline for funds to move.
+- REFUND: A reversal of a previously settled PAY/COLLECT transaction,
+  typically initiated by the merchant/payee side and processed as a fresh
+  credit to the original payer.
+
+6. COLLECT REQUEST EXPIRY
+A UPI COLLECT request is valid for a maximum of 30 minutes from creation.
+If the payer does not approve or decline within this window, the request
+auto-expires and must be re-initiated by the payee if payment is still
+required. This is an NPCI-mandated timeout to prevent stale collect
+requests from being approved unexpectedly.
+
+7. NPCI TRANSACTION ID FORMAT
+Every UPI transaction is assigned an NPCI transaction ID, a 12-digit
+numeric value analogous in role to the IMPS RRN, used for reconciliation
+and dispute resolution between the payer PSP, payee PSP, and NPCI's central
+switch. Example: 402501234567. Both the app-level UPI transaction reference
+(alphanumeric, bank-generated) and the NPCI transaction ID should be
+retained for support and audit purposes.

@@ -1,0 +1,96 @@
+RBI GUIDELINES: FRAUD PREVENTION IN DIGITAL PAYMENTS
+
+1. GENERAL FRAUD PREVENTION FRAMEWORK
+RBI's Master Directions on Digital Payment Security Controls and the Master
+Direction on Fraud Risk Management require regulated entities to implement
+real-time and near-real-time transaction monitoring, layered authentication,
+and risk-based transaction limits across all digital payment rails
+(NEFT/RTGS/IMPS/UPI). Payment processors are expected to combine rule-based
+and behavioral/ML-based detection to flag anomalous transactions before or
+immediately after settlement.
+
+2. VELOCITY CHECK THRESHOLDS
+Velocity checks monitor the rate of transactions from a single account or
+device within a rolling time window. Common industry/RBI-aligned thresholds:
+- More than 5 transactions within a 10-minute window from the same account
+  is considered anomalous and should be flagged for review.
+- More than 3 transactions to the same beneficiary within 5 minutes should
+  be treated as a potential duplicate-payment or automated-fraud pattern.
+- A sudden spike in transaction count relative to the customer's 30-day
+  rolling average (e.g., 5x normal daily volume) should raise the risk
+  score even if individual transactions appear unremarkable.
+
+3. UNUSUAL TRANSACTION PATTERNS
+- Amount anomaly: A transaction more than 3x the customer's historical
+  average transaction amount, especially to a new/unregistered beneficiary.
+- Odd-hour transfers: High-value NEFT/RTGS transactions initiated late at
+  night (e.g., after 11 PM) are statistically over-represented in fraud
+  cases and should receive elevated scrutiny, particularly for first-time
+  beneficiaries.
+- Geo/device anomaly: Transaction originating from a device or IP
+  inconsistent with the customer's established pattern.
+- New beneficiary + large first-transaction amount: Fraud rings frequently
+  add a new mule beneficiary and immediately push a large-value transfer.
+
+4. AML (ANTI MONEY LAUNDERING) RULES
+Under the Prevention of Money Laundering Act (PMLA) and RBI's Master
+Direction on KYC, regulated entities must:
+- Maintain a risk-based customer due diligence (CDD) programme.
+- Monitor for transaction patterns consistent with layering, placement, or
+  integration stages of money laundering.
+- File Cash Transaction Reports (CTR) and Suspicious Transaction Reports
+  (STR) with the Financial Intelligence Unit-India (FIU-IND) as required.
+
+5. CTR (CASH TRANSACTION REPORT) THRESHOLD
+Cash transactions (individually or as an interconnected series) aggregating
+to Rs 10,00,000 or more in a calendar month must be reported via a CTR to
+FIU-IND. Note: for electronic/digital payment processors specifically,
+platform-level "large value transaction" monitoring commonly references
+Rs 50,00,000 (Rs 50 lakh) as an internal escalation threshold for
+enhanced due diligence review on non-cash, high-value fund movements,
+even though the statutory CTR requirement is cash-specific.
+
+6. STRUCTURING DETECTION
+Structuring ("smurfing") is the practice of splitting a large transaction
+into multiple smaller transactions to evade reporting or approval
+thresholds. Detection heuristics:
+- Multiple transactions just below the RTGS/NEFT threshold of interest
+  (e.g., three or more transactions of Rs 9,00,000-Rs 9,99,999 within a
+  short window, deliberately staying under the Rs 10,00,000 NEFT ceiling
+  or an internal Rs 10 lakh review threshold).
+- Multiple transactions to the same or related beneficiaries within a
+  short time span that, if aggregated, would exceed a single-transaction
+  review or reporting threshold.
+- Rapid-fire transactions across different payment rails (NEFT + IMPS +
+  UPI) to the same beneficiary in a short window.
+
+7. PEP (POLITICALLY EXPOSED PERSON) SCREENING
+Customers and beneficiaries must be screened against PEP lists (domestic
+and foreign) as part of onboarding and periodically thereafter. Transactions
+involving a PEP counterparty should receive enhanced due diligence and a
+higher baseline risk score, per RBI's KYC Master Direction.
+
+8. KYC REQUIREMENTS BEFORE PAYMENT
+No payment instruction should be processed for an account that has not
+completed at least minimum/simplified KYC. Full KYC is required before
+high-value RTGS transactions or before limits are enhanced. Payments
+involving a beneficiary account flagged as "KYC non-compliant" or "under
+review" should be blocked pending resolution.
+
+9. SUSPICIOUS TRANSACTION REPORT (STR) REQUIREMENTS
+Any transaction, or a series of related transactions, that a regulated
+entity has reason to suspect involves proceeds of crime, is designed to
+evade reporting requirements, or has no apparent economic/lawful purpose,
+must be reported as an STR to FIU-IND, regardless of the transaction
+amount. There is no minimum threshold for STR filing, unlike CTR.
+
+10. COMMON FRAUD PATTERNS IN NEFT/RTGS/IMPS/UPI
+- Vishing/phishing-induced UPI COLLECT approval, where the victim is
+  tricked into approving a COLLECT request believing it to be a receipt.
+- Account takeover followed by rapid IMPS/UPI transfers to mule accounts
+  before the legitimate customer notices.
+- Fake customer-support numbers directing victims to share OTP/UPI PIN.
+- Business email compromise leading to fraudulent RTGS/NEFT transfers
+  to attacker-controlled accounts disguised as a genuine vendor.
+- SIM-swap fraud enabling interception of OTPs used for UPI registration
+  or high-value transaction authorization.

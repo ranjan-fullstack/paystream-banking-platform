@@ -446,6 +446,49 @@ channels:
         $ref: '#/components/messages/FraudAlertEvent'
 
   # ───────────────────────────────────────────────────────────────────────────
+  ai.fraud.alert:
+  # ───────────────────────────────────────────────────────────────────────────
+    description: |
+      **Reserved** — provisioned for `ai-service`'s LLM-based fraud analysis
+      (`POST /api/v1/ai/fraud/analyze`, see `api-docs/openapi/ai-service.yaml`)
+      to publish when it determines `risk_level` is `HIGH` or `CRITICAL`, so
+      `notification-service` and `audit-service` can react the same way they
+      already do to `fraud.alert` from the rule-based
+      `fraud-detection-service`. Distinct from `fraud.alert` because the AI
+      assessment carries an LLM-generated natural-language `explanation` and
+      the RAG (RBI guideline) context used to reach it, which the rule engine
+      does not produce.
+
+      **Not yet wired:** `ai-service` (Python/FastAPI) does not currently
+      depend on a Kafka client — `POST /api/v1/ai/fraud/analyze` returns its
+      `FraudAnalysisResponse` synchronously over HTTP only. Publishing this
+      event is planned for when `ai-service` needs to fan its findings out
+      to downstream consumers asynchronously, same rationale as
+      `notification.send` below.
+    bindings:
+      kafka:
+        topic: ai.fraud.alert
+        partitions: 3
+        replicas: 1
+    publish:
+      operationId: publishAIFraudAlert
+      tags:
+        - name: ai-service
+      message:
+        $ref: '#/components/messages/AIFraudAlertEvent'
+    subscribe:
+      operationId: consumeAIFraudAlert
+      tags:
+        - name: notification-service
+        - name: audit-service
+      bindings:
+        kafka:
+          groupId: notification-service-group
+          autoOffsetReset: earliest
+      message:
+        $ref: '#/components/messages/AIFraudAlertEvent'
+
+  # ───────────────────────────────────────────────────────────────────────────
   notification.send:
   # ───────────────────────────────────────────────────────────────────────────
     description: |
@@ -566,6 +609,15 @@ channels:
       message:
         $ref: '#/components/messages/DeadLetterMessage'
 
+  ai.fraud.alert.DLT:
+    description: Dead Letter Topic for `ai.fraud.alert`. See `DeadLetterMessage` schema.
+    bindings:
+      kafka: { topic: ai.fraud.alert.DLT, partitions: 3, replicas: 1 }
+    subscribe:
+      operationId: consumeAIFraudAlertDLT
+      message:
+        $ref: '#/components/messages/DeadLetterMessage'
+
   account.created.DLT:
     description: Dead Letter Topic for `account.created`. See `DeadLetterMessage` schema.
     bindings:
@@ -630,6 +682,19 @@ components:
         - $ref: '#/components/messageTraits/withCorrelationId'
       payload:
         $ref: '#/components/schemas/FraudAlertEvent'
+
+    AIFraudAlertEvent:
+      name: AIFraudAlertEvent
+      title: AI Fraud Alert Event
+      summary: >
+        Reserved for `ai-service` to emit when its LLM-based fraud analysis
+        determines HIGH or CRITICAL risk. See `ai.fraud.alert` channel
+        description for current (HTTP-only) status.
+      contentType: application/json
+      traits:
+        - $ref: '#/components/messageTraits/withCorrelationId'
+      payload:
+        $ref: '#/components/schemas/AIFraudAlertEvent'
 
     AccountCreatedEvent:
       name: AccountCreatedEvent
@@ -770,6 +835,40 @@ components:
         action:
           type: string
           enum: [FLAG, ALERT, BLOCK]
+        raisedAt:
+          type: string
+          format: date-time
+
+    AIFraudAlertEvent:
+      type: object
+      description: |
+        **Source:** `ai-service`'s `FraudAIService.analyze_transaction` (Python,
+        not part of `common-lib` since `ai-service` is not a JVM module).
+      required:
+        - transactionReference
+        - riskLevel
+        - riskScore
+        - recommendation
+      properties:
+        transactionReference:
+          type: string
+        riskLevel:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        riskScore:
+          type: number
+          format: double
+          example: 88.0
+        fraudIndicators:
+          type: array
+          items:
+            type: string
+        recommendation:
+          type: string
+          enum: [APPROVE, REVIEW, BLOCK]
+        explanation:
+          type: string
+          description: LLM-generated natural-language rationale for the risk assessment.
         raisedAt:
           type: string
           format: date-time
