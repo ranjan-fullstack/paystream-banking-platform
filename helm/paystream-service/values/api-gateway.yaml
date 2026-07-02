@@ -1,0 +1,9 @@
+serviceName: api-gateway
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/api-gateway
+  tag: "latest"
+containerPort: 9000
+ingress:
+  enabled: true
+  host: api.paystream.internal
+  path: /

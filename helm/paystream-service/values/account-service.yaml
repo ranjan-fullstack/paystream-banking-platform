@@ -1,0 +1,5 @@
+serviceName: account-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/account-service
+  tag: "latest"
+containerPort: 9003

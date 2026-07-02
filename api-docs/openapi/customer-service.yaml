@@ -1,0 +1,443 @@
+openapi: 3.0.3
+info:
+  title: PayStream Customer Service
+  version: 1.0.0
+  description: |
+    Manages customer onboarding, profile data and KYC (Know Your Customer) verification.
+    All endpoints require a Bearer JWT issued by auth-service (enforced by the API Gateway).
+    The KYC verification endpoint additionally requires the caller's role (forwarded by the
+    gateway via the `X-USER-ROLE` header) to be one of TELLER, ADMIN or COMPLIANCE_OFFICER.
+servers:
+  - url: http://localhost:9002
+    description: customer-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: Customer
+  - name: KYC
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/customers/register:
+    post:
+      tags: [Customer]
+      summary: Register a new customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerRegisterRequest'
+            example:
+              firstName: Jane
+              lastName: Doe
+              email: jane.doe@example.com
+              mobile: '9876543210'
+              panNumber: ABCDE1234F
+              aadhaarNumber: '123456789012'
+              dateOfBirth: '1990-05-15'
+              userId: 1
+      responses:
+        '201':
+          description: Customer registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+              example:
+                id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                customerId: CUST00000001
+                firstName: Jane
+                lastName: Doe
+                email: jane.doe@example.com
+                mobile: '9876543210'
+                kycStatus: PENDING
+                riskRating: LOW
+                createdAt: '2026-06-28T10:00:00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Customer with this email or mobile already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-06-28T10:00:00Z'
+                status: 409
+                error: CONFLICT
+                message: Customer with this email already exists
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/customers/{customerId}:
+    get:
+      tags: [Customer]
+      summary: Get a customer by ID
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: Customer found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags: [Customer]
+      summary: Update customer profile fields
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerUpdateRequest'
+            example:
+              firstName: Jane
+              lastName: Smith
+              email: jane.smith@example.com
+              mobile: '9876543211'
+      responses:
+        '200':
+          description: Customer updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/customers/{customerId}/kyc:
+    post:
+      tags: [KYC]
+      summary: Submit KYC documents for a customer
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycSubmitRequest'
+            example:
+              documents:
+                - documentType: PAN
+                  documentNumber: ABCDE1234F
+                - documentType: AADHAAR
+                  documentNumber: '123456789012'
+      responses:
+        '201':
+          description: KYC documents submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycStatusResponse'
+              example:
+                customerId: CUST00000001
+                kycStatus: IN_PROGRESS
+                documents:
+                  - id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                    documentType: PAN
+                    status: PENDING
+                    verifiedAt: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      tags: [KYC]
+      summary: Get the current KYC status and documents for a customer
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: KYC status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/customers/{customerId}/kyc/verify:
+    put:
+      tags: [KYC]
+      summary: Approve or reject a customer's KYC submission
+      description: Requires the caller's role (`X-USER-ROLE`, forwarded by the gateway from the JWT) to be TELLER, ADMIN or COMPLIANCE_OFFICER.
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycVerifyRequest'
+            example:
+              status: VERIFIED
+              remarks: Documents verified against UIDAI records
+      responses:
+        '200':
+          description: KYC status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycStatusResponse'
+              example:
+                customerId: CUST00000001
+                kycStatus: VERIFIED
+                documents:
+                  - id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                    documentType: PAN
+                    status: VERIFIED
+                    verifiedAt: '2026-06-28T11:00:00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller role is not TELLER, ADMIN or COMPLIANCE_OFFICER
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-06-28T10:00:00Z'
+                status: 403
+                error: FORBIDDEN
+                message: Role CUSTOMER is not permitted to verify KYC
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CustomerId:
+      name: customerId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: CUST00000001
+  schemas:
+    KycStatus:
+      type: string
+      enum: [PENDING, IN_PROGRESS, VERIFIED, REJECTED]
+    RiskRating:
+      type: string
+      enum: [LOW, MEDIUM, HIGH]
+    DocumentType:
+      type: string
+      enum: [PAN, AADHAAR, PASSPORT, DRIVING_LICENSE]
+    DocumentStatus:
+      type: string
+      enum: [PENDING, VERIFIED, REJECTED]
+    CustomerRegisterRequest:
+      type: object
+      required: [firstName, lastName, email, mobile, panNumber, aadhaarNumber, dateOfBirth, userId]
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        mobile:
+          type: string
+          pattern: '^[6-9]\d{9}$'
+          description: 10-digit Indian mobile number
+        panNumber:
+          type: string
+          pattern: '^[A-Z]{5}\d{4}[A-Z]$'
+        aadhaarNumber:
+          type: string
+          pattern: '^\d{12}$'
+        dateOfBirth:
+          type: string
+          format: date
+        userId:
+          type: integer
+          format: int64
+    CustomerUpdateRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        mobile:
+          type: string
+          pattern: '^[6-9]\d{9}$'
+    CustomerResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+        mobile:
+          type: string
+        kycStatus:
+          $ref: '#/components/schemas/KycStatus'
+        riskRating:
+          $ref: '#/components/schemas/RiskRating'
+        createdAt:
+          type: string
+          format: date-time
+    KycDocumentRequest:
+      type: object
+      required: [documentType, documentNumber]
+      properties:
+        documentType:
+          $ref: '#/components/schemas/DocumentType'
+        documentNumber:
+          type: string
+    KycSubmitRequest:
+      type: object
+      required: [documents]
+      properties:
+        documents:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/KycDocumentRequest'
+    KycDocumentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        documentType:
+          $ref: '#/components/schemas/DocumentType'
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+        verifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+    KycStatusResponse:
+      type: object
+      properties:
+        customerId:
+          type: string
+        kycStatus:
+          $ref: '#/components/schemas/KycStatus'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/KycDocumentResponse'
+    KycVerifyRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/KycStatus'
+        remarks:
+          type: string
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 400, error: VALIDATION_FAILED, message: 'email must be a valid email address' }
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Customer not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'Customer not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

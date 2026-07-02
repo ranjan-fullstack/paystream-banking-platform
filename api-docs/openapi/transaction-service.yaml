@@ -1,0 +1,279 @@
+openapi: 3.0.3
+info:
+  title: PayStream Transaction Service
+  version: 1.0.0
+  description: |
+    Read-only ledger/history service that aggregates NEFT, RTGS, IMPS and UPI
+    transactions into a unified transaction view, account statements (PDF) and
+    summaries. All endpoints require a Bearer JWT when accessed through the API Gateway.
+servers:
+  - url: http://localhost:9008
+    description: transaction-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: Transactions
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/transactions/{transactionId}:
+    get:
+      tags: [Transactions]
+      summary: Get a single transaction by ID
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: NEFT2026062800001
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+              example:
+                transactionId: NEFT2026062800001
+                paymentMode: NEFT
+                paymentReferenceNumber: NEFT2026062800001
+                debitAccountNumber: '1234567890123456'
+                creditAccountNumber: '6543210987654321'
+                amount: 25000.00
+                currency: INR
+                status: COMPLETED
+                initiatedAt: '2026-06-28T10:15:00'
+                completedAt: '2026-06-28T10:30:05'
+                description: Rent payment
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/transactions/account/{accountNumber}:
+    get:
+      tags: [Transactions]
+      summary: Get transaction history for an account
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: '1234567890123456'
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          example: '2026-06-01T00:00:00'
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          example: '2026-06-28T23:59:59'
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PaymentMode'
+      responses:
+        '200':
+          description: List of transactions (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/transactions/statement/{accountNumber}:
+    get:
+      tags: [Transactions]
+      summary: Download a PDF bank statement for an account
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: '1234567890123456'
+      responses:
+        '200':
+          description: PDF statement
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: attachment; filename="statement-1234567890123456.pdf"
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/transactions/summary/{accountNumber}:
+    get:
+      tags: [Transactions]
+      summary: Get an aggregated transaction summary for an account
+      parameters:
+        - name: accountNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: '1234567890123456'
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionSummaryResponse'
+              example:
+                accountNumber: '1234567890123456'
+                totalTransactions: 48
+                totalAmount: 1245000.00
+                countByMode: { NEFT: 20, RTGS: 3, IMPS: 15, UPI: 10 }
+                totalAmountByMode: { NEFT: 650000.00, RTGS: 500000.00, IMPS: 65000.00, UPI: 30000.00 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    PaymentMode:
+      type: string
+      enum: [NEFT, RTGS, IMPS, UPI]
+    TransactionStatus:
+      type: string
+      enum: [PENDING, COMPLETED, FAILED, RETURNED, DISPUTED]
+    TransactionResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+        paymentMode:
+          $ref: '#/components/schemas/PaymentMode'
+        paymentReferenceNumber:
+          type: string
+        debitAccountNumber:
+          type: string
+        creditAccountNumber:
+          type: string
+        amount:
+          type: number
+          format: double
+        currency:
+          type: string
+        status:
+          $ref: '#/components/schemas/TransactionStatus'
+        initiatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        description:
+          type: string
+          nullable: true
+    TransactionSummaryResponse:
+      type: object
+      properties:
+        accountNumber:
+          type: string
+        totalTransactions:
+          type: integer
+          format: int64
+        totalAmount:
+          type: number
+          format: double
+        countByMode:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+        totalAmountByMode:
+          type: object
+          additionalProperties:
+            type: number
+            format: double
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Transaction or account not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'Transaction not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

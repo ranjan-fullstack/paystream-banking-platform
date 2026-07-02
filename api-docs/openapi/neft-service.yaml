@@ -1,0 +1,341 @@
+openapi: 3.0.3
+info:
+  title: PayStream NEFT Service
+  version: 1.0.0
+  description: |
+    Handles National Electronic Funds Transfer (NEFT) transfers. NEFT settles in
+    half-hourly batches between 08:00 and 19:00, Monday-Saturday (cron `0 0,30 8-19 * * MON-SAT`).
+    Transfers initiated outside this window are rejected. All endpoints require a Bearer
+    JWT (enforced by the API Gateway). Batch listing endpoints additionally require the
+    caller's role (`X-USER-ROLE`, forwarded by the gateway) to be ADMIN.
+servers:
+  - url: http://localhost:9004
+    description: neft-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: NEFT Transfer
+  - name: NEFT Batch
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/neft/transfer:
+    post:
+      tags: [NEFT Transfer]
+      summary: Initiate a NEFT transfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NeftTransferRequest'
+            example:
+              customerId: CUST00000001
+              senderAccountNumber: '1234567890123456'
+              senderIfsc: PYST0001234
+              beneficiaryAccountNumber: '6543210987654321'
+              beneficiaryIfsc: HDFC0001234
+              beneficiaryName: John Smith
+              amount: 25000.00
+              remarks: Rent payment
+      responses:
+        '201':
+          description: Transfer queued for next batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NeftTransactionResponse'
+              example:
+                neftReferenceNumber: NEFT2026062800001
+                senderAccountNumber: '1234567890123456'
+                beneficiaryAccountNumber: '6543210987654321'
+                beneficiaryName: John Smith
+                amount: 25000.00
+                status: QUEUED
+                batchId: BATCH-20260628-1030
+                initiatedAt: '2026-06-28T10:15:00'
+                completedAt: null
+                failureReason: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid account or NEFT window closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T20:00:00Z', status: 422, error: NEFT_WINDOW_CLOSED, message: 'NEFT transfers are only accepted between 08:00 and 19:00, Mon-Sat' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/neft/{referenceNumber}:
+    get:
+      tags: [NEFT Transfer]
+      summary: Track a NEFT transfer by reference number
+      parameters:
+        - name: referenceNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: NEFT2026062800001
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NeftTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/neft/customer/{customerId}/history:
+    get:
+      tags: [NEFT Transfer]
+      summary: Get NEFT transaction history for a customer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUST00000001
+      responses:
+        '200':
+          description: List of NEFT transactions (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NeftTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/neft/batches:
+    get:
+      tags: [NEFT Batch]
+      summary: List all NEFT settlement batches
+      description: Requires caller role ADMIN.
+      responses:
+        '200':
+          description: List of batches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NeftBatchResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller role is not ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Only ADMIN may view batches' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/neft/batches/{batchId}:
+    get:
+      tags: [NEFT Batch]
+      summary: Get details of a specific NEFT batch
+      description: Requires caller role ADMIN.
+      parameters:
+        - name: batchId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: BATCH-20260628-1030
+      responses:
+        '200':
+          description: Batch found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NeftBatchResponse'
+              example:
+                batchNumber: BATCH-20260628-1030
+                scheduledAt: '2026-06-28T10:30:00'
+                processedAt: '2026-06-28T10:30:05'
+                totalTransactions: 142
+                totalAmount: 3850000.00
+                successCount: 140
+                failureCount: 2
+                status: COMPLETED
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller role is not ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Only ADMIN may view batches' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    NeftStatus:
+      type: string
+      enum: [INITIATED, VALIDATED, QUEUED, BATCH_PROCESSING, COMPLETED, FAILED, RETURNED]
+    NeftBatchStatus:
+      type: string
+      enum: [SCHEDULED, PROCESSING, COMPLETED, FAILED]
+    NeftTransferRequest:
+      type: object
+      required: [customerId, senderAccountNumber, senderIfsc, beneficiaryAccountNumber, beneficiaryIfsc, beneficiaryName, amount]
+      properties:
+        customerId:
+          type: string
+        senderAccountNumber:
+          type: string
+        senderIfsc:
+          type: string
+        beneficiaryAccountNumber:
+          type: string
+        beneficiaryIfsc:
+          type: string
+        beneficiaryName:
+          type: string
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          maximum: 1000000
+        remarks:
+          type: string
+    NeftTransactionResponse:
+      type: object
+      properties:
+        neftReferenceNumber:
+          type: string
+        senderAccountNumber:
+          type: string
+        beneficiaryAccountNumber:
+          type: string
+        beneficiaryName:
+          type: string
+        amount:
+          type: number
+          format: double
+        status:
+          $ref: '#/components/schemas/NeftStatus'
+        batchId:
+          type: string
+          nullable: true
+        initiatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        failureReason:
+          type: string
+          nullable: true
+    NeftBatchResponse:
+      type: object
+      properties:
+        batchNumber:
+          type: string
+        scheduledAt:
+          type: string
+          format: date-time
+        processedAt:
+          type: string
+          format: date-time
+          nullable: true
+        totalTransactions:
+          type: integer
+        totalAmount:
+          type: number
+          format: double
+        successCount:
+          type: integer
+        failureCount:
+          type: integer
+        status:
+          $ref: '#/components/schemas/NeftBatchStatus'
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 400, error: VALIDATION_FAILED, message: 'amount must be at least 0.01' }
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Transaction or batch not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'NEFT transaction not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

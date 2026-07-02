@@ -1,0 +1,5 @@
+serviceName: transaction-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/transaction-service
+  tag: "latest"
+containerPort: 9008

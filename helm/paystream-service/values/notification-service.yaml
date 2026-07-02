@@ -1,0 +1,5 @@
+serviceName: notification-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/notification-service
+  tag: "latest"
+containerPort: 9010

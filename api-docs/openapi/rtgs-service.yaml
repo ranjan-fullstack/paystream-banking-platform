@@ -1,0 +1,289 @@
+openapi: 3.0.3
+info:
+  title: PayStream RTGS Service
+  version: 1.0.0
+  description: |
+    Handles Real Time Gross Settlement (RTGS) transfers — high-value transfers
+    (minimum ₹2,00,000) settled individually and immediately. All endpoints require
+    a Bearer JWT (enforced by the API Gateway). The recall endpoint additionally
+    requires the caller's role (`X-USER-ROLE`, forwarded by the gateway) to be ADMIN.
+servers:
+  - url: http://localhost:9012
+    description: rtgs-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: RTGS Transfer
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/rtgs/transfer:
+    post:
+      tags: [RTGS Transfer]
+      summary: Initiate an RTGS transfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RtgsTransferRequest'
+            example:
+              customerId: CUST00000001
+              senderAccountNumber: '1234567890123456'
+              senderIfsc: PYST0001234
+              beneficiaryAccountNumber: '6543210987654321'
+              beneficiaryIfsc: HDFC0001234
+              beneficiaryName: Acme Industries Pvt Ltd
+              amount: 500000.00
+              purpose: BUSINESS_PAYMENT
+      responses:
+        '201':
+          description: Transfer settled or in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RtgsTransactionResponse'
+              example:
+                rtgsReferenceNumber: RTGS2026062800001
+                senderAccountNumber: '1234567890123456'
+                beneficiaryAccountNumber: '6543210987654321'
+                beneficiaryName: Acme Industries Pvt Ltd
+                amount: 500000.00
+                purpose: BUSINESS_PAYMENT
+                status: PROCESSING
+                initiatedAt: '2026-06-28T11:00:00'
+                settledAt: null
+                rbiUtrNumber: null
+                failureReason: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid account or RTGS window closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T20:00:00Z', status: 422, error: RTGS_WINDOW_CLOSED, message: 'RTGS transfers are not accepted outside operating hours' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/rtgs/{referenceNumber}:
+    get:
+      tags: [RTGS Transfer]
+      summary: Track an RTGS transfer by reference number
+      parameters:
+        - name: referenceNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: RTGS2026062800001
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RtgsTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/rtgs/customer/{customerId}/history:
+    get:
+      tags: [RTGS Transfer]
+      summary: Get RTGS transaction history for a customer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUST00000001
+      responses:
+        '200':
+          description: List of RTGS transactions (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RtgsTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/rtgs/{referenceNumber}/recall:
+    post:
+      tags: [RTGS Transfer]
+      summary: Request recall of an RTGS transfer
+      description: Requires caller role ADMIN. Cannot recall a transfer that has already settled.
+      parameters:
+        - name: referenceNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: RTGS2026062800001
+      responses:
+        '200':
+          description: Recall accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RtgsTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller role is not ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Only ADMIN may request a recall' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Transaction already settled and cannot be recalled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 409, error: ALREADY_SETTLED, message: 'RTGS transaction has already settled and cannot be recalled' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    RtgsStatus:
+      type: string
+      enum: [INITIATED, VALIDATING, PROCESSING, COMPLETED, FAILED, RETURNED]
+    RtgsPurpose:
+      type: string
+      enum: [BUSINESS_PAYMENT, PROPERTY_PURCHASE, LOAN_REPAYMENT, CAPITAL_MARKET, TRADE_SETTLEMENT, OTHER]
+    RtgsTransferRequest:
+      type: object
+      required: [customerId, senderAccountNumber, senderIfsc, beneficiaryAccountNumber, beneficiaryIfsc, beneficiaryName, amount, purpose]
+      properties:
+        customerId:
+          type: string
+        senderAccountNumber:
+          type: string
+        senderIfsc:
+          type: string
+        beneficiaryAccountNumber:
+          type: string
+        beneficiaryIfsc:
+          type: string
+        beneficiaryName:
+          type: string
+        amount:
+          type: number
+          format: double
+          minimum: 200000.00
+          description: RTGS minimum transfer amount is ₹2,00,000
+        purpose:
+          $ref: '#/components/schemas/RtgsPurpose'
+    RtgsTransactionResponse:
+      type: object
+      properties:
+        rtgsReferenceNumber:
+          type: string
+        senderAccountNumber:
+          type: string
+        beneficiaryAccountNumber:
+          type: string
+        beneficiaryName:
+          type: string
+        amount:
+          type: number
+          format: double
+        purpose:
+          $ref: '#/components/schemas/RtgsPurpose'
+        status:
+          $ref: '#/components/schemas/RtgsStatus'
+        initiatedAt:
+          type: string
+          format: date-time
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+        rbiUtrNumber:
+          type: string
+          nullable: true
+        failureReason:
+          type: string
+          nullable: true
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 400, error: VALIDATION_FAILED, message: 'amount must be at least 200000.00' }
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Transaction not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'RTGS transaction not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

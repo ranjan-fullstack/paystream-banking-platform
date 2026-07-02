@@ -1,0 +1,35 @@
+﻿server:
+  port: 9003
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/paystream_accounts
+    #url: jdbc:postgresql://postgres:5432/paystream_accounts
+    username: ${ACCOUNT_DB_USERNAME}
+    password: ${ACCOUNT_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    #bootstrap-servers: kafka:9092
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,busrefresh
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans

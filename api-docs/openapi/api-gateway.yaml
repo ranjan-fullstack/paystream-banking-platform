@@ -1,0 +1,138 @@
+openapi: 3.0.3
+info:
+  title: PayStream API Gateway
+  version: 1.0.0
+  description: |
+    Single entry point (Spring Cloud Gateway, reactive/WebFlux) for the PayStream
+    Banking Platform. The gateway terminates JWT authentication, forwards the
+    caller's role to downstream services via the `X-USER-ROLE` header, applies
+    Redis-backed rate limiting, and routes requests by path prefix to the
+    appropriate downstream microservice over Eureka service discovery.
+
+    This document describes the gateway's routing, security and rate-limit
+    behavior. For request/response payloads of a given route, see the matching
+    per-service OpenAPI spec in this same `openapi/` folder.
+
+    ### Route table
+
+    | Path prefix | Downstream service | Auth |
+    |---|---|---|
+    | `/auth/v1/**` | auth-service (9005) | Public |
+    | `/api/v1/customers/**` | customer-service (9002) | Bearer JWT |
+    | `/api/v1/accounts/**` | account-service (9003) | Bearer JWT (GET: any role; POST/PUT/DELETE: ADMIN or TELLER) |
+    | `/api/v1/neft/**` | neft-service (9004) | Bearer JWT (batch endpoints: ADMIN) |
+    | `/api/v1/imps/**` | imps-service (9006) | Bearer JWT |
+    | `/api/v1/upi/**` | upi-service (9007) | Bearer JWT |
+    | `/api/v1/transactions/**` | transaction-service (9008) | Bearer JWT |
+    | `/api/v1/fraud/**` | fraud-detection-service (9009) | Bearer JWT (FRAUD_ANALYST/ADMIN for alerts, ADMIN for rules) |
+    | `/api/v1/notifications/**` | notification-service (9010) | Bearer JWT |
+    | `/api/v1/audit/**` | audit-service (9011) | Bearer JWT (event-type lookup: ADMIN/COMPLIANCE_OFFICER) |
+    | `/api/v1/rtgs/**` | rtgs-service (9012) | Bearer JWT (recall: ADMIN) |
+    | `/internal/accounts/**` | account-service (9003) | `X-API-KEY` header (service-to-service only) |
+    | `/v3/api-docs/**`, `/swagger-ui/**` | per-service OpenAPI docs | Public |
+
+    ### Global filters
+    - **JwtAuthenticationFilter** — validates `Authorization: Bearer <token>`, extracts the `role` claim, forwards it downstream as `X-USER-ROLE`. Returns 401 if missing/invalid, 403 if role-gated route and role insufficient.
+    - **ApiKeyFilter** — protects `/internal/**` with a static `X-API-KEY` header, evaluated before the JWT filter.
+    - **RequestRateLimiter** — Redis token bucket, 10 requests/sec replenish, burst capacity 20, keyed by client IP. Returns 429 when exceeded.
+    - **CORS** — allows all origins/methods/headers with credentials, for browser-based clients.
+  contact:
+    name: PayStream Platform Team
+servers:
+  - url: http://localhost:9000
+    description: api-gateway (single entry point for all services)
+
+tags:
+  - name: Gateway
+
+security:
+  - bearerAuth: []
+
+paths:
+  /actuator/health:
+    get:
+      tags: [Gateway]
+      summary: Gateway liveness/readiness health check
+      security: []
+      responses:
+        '200':
+          description: Gateway is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /actuator/info:
+    get:
+      tags: [Gateway]
+      summary: Gateway build/application info
+      security: []
+      responses:
+        '200':
+          description: Application info
+          content:
+            application/json:
+              schema:
+                type: object
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT (does not apply to /auth/v1/**, /actuator/health, /actuator/info)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted for this route
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: No matching route, or downstream resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'Resource not found' }
+    TooManyRequests:
+      description: Rate limit exceeded (10 req/s, burst 20, per client IP)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 429, error: TOO_MANY_REQUESTS, message: 'Rate limit exceeded' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

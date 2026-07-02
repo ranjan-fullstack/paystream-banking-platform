@@ -1,0 +1,103 @@
+# Representative template — replicate this NetworkPolicy (name, podSelector,
+# port, and egress targets adjusted) for each of the other 13 PayStream
+# services based on their actual dependencies (see docs/asyncapi.yml for the
+# Kafka topics each service produces/consumes, and each service's
+# config-repo/<service>.yml for its datastore).
+#
+# Default deny all, then explicitly allow only what's needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: account-service-netpol
+  namespace: paystream-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: account-service
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow from API Gateway only
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 9003
+
+    # Allow from neft/rtgs/imps/upi services (Feign clients calling
+    # /internal/accounts/** for validate/debit/credit)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: neft-service
+        - podSelector:
+            matchLabels:
+              app: rtgs-service
+        - podSelector:
+            matchLabels:
+              app: imps-service
+        - podSelector:
+            matchLabels:
+              app: upi-service
+      ports:
+        - protocol: TCP
+          port: 9003
+
+    # Allow from Prometheus (monitoring scraping)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9003
+
+  egress:
+    # Allow to PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow to Kafka (publishes account.created)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+
+    # Allow to Eureka (service discovery) and Config Server
+    - to:
+        - podSelector:
+            matchLabels:
+              app: discovery-server
+      ports:
+        - protocol: TCP
+          port: 8761
+    - to:
+        - podSelector:
+            matchLabels:
+              app: config-server
+      ports:
+        - protocol: TCP
+          port: 8888
+
+    # Allow DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+
+    # Allow to AWS services (S3, ECR, Secrets Manager)
+    - ports:
+        - protocol: TCP
+          port: 443

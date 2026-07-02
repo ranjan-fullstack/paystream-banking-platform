@@ -1,0 +1,5 @@
+serviceName: rtgs-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/rtgs-service
+  tag: "latest"
+containerPort: 9012

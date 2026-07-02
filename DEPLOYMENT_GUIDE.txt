@@ -1,0 +1,994 @@
+================================================================================
+         PAYSTREAM BANKING PLATFORM — COMPLETE A-Z DEPLOYMENT GUIDE
+                    MNC + Product Company Level Setup
+================================================================================
+
+  This guide builds ONE shared CI/CD pipeline that builds, scans, and
+  deploys all 14 PayStream microservices (config-server, discovery-server,
+  api-gateway, auth-service, customer-service, account-service, neft-service,
+  rtgs-service, imps-service, upi-service, transaction-service,
+  fraud-detection-service, notification-service, audit-service) using:
+    - ONE Jenkinsfile / GitHub Actions workflow that loops/matrices over
+      all 14 services for Docker build + Trivy scan + ECR push.
+    - ONE generic Helm chart (helm/paystream-service/) parameterized per
+      service (values/<service>.yaml) and per environment.
+    - ONE ArgoCD ApplicationSet per environment (k8s/argocd/*.yaml) that
+      generates one Application per service from that same chart.
+
+TOOLS USED
+----------
+  Jenkins       — CI Pipeline (Build, Test, Scan, Push)
+  SonarQube     — Code Quality + Quality Gate
+  OWASP         — Dependency vulnerability scan
+  Nexus         — Artifact repository (JAR storage)
+  Trivy         — Docker image security scan
+  AWS ECR       — Container image registry
+  Terraform     — Infrastructure as Code (EC2 + EKS + ECR + VPC)
+  Helm          — Kubernetes package manager
+  ArgoCD        — GitOps CD (watches Git, deploys to K8s)
+  Argo Rollouts — Canary deployment (20% → 50% → 100%)
+  Istio         — Service mesh (mTLS + traffic control)
+  Ext Secrets   — Pulls secrets from AWS Secrets Manager into K8s
+  Cluster CA    — Scales EC2 nodes automatically
+  HPA           — Scales pods automatically
+  Prometheus    — Metrics collection
+  Grafana       — Dashboards + alerts
+  Loki          — Log aggregation
+  Slack         — Pipeline notifications
+  NetworkPolicy — Pod-to-pod security
+
+================================================================================
+FULL PIPELINE FLOW
+================================================================================
+
+  YOUR LAPTOP
+      │ git push
+      ▼
+  GITHUB
+      │ GitHub Actions triggers Jenkins
+      ▼
+  JENKINS (EC2 :8080)
+      ├── Checkout
+      ├── Build + Test (mvn verify)
+      ├── OWASP Dependency Check
+      ├── SonarQube Analysis ──────────────────→ SonarQube (:9001)
+      ├── Quality Gate (HARD STOP if fails) ←──
+      ├── Package JAR → Upload ────────────────→ Nexus (:8082)
+      ├── Docker Build
+      ├── Trivy Scan (CRITICAL CVE = fail)
+      ├── Push image ──────────────────────────→ AWS ECR
+      └── Update image tag in Git (values.yaml)
+              │
+              ▼ ArgoCD detects Git change
+      ARGOCD (EKS)
+          ├── DEV     → auto deploy → Argo Rollouts canary
+          ├── STAGING → auto deploy → canary + Prometheus check
+          └── PROD    → MANUAL APPROVE → canary 20% → 50% → 100%
+              │
+              ▼
+      EKS CLUSTER (paystream-cluster)
+          ├── Istio service mesh (mTLS between all services)
+          ├── External Secrets (AWS Secrets Manager)
+          ├── HPA (pod autoscaling)
+          ├── Cluster Autoscaler (node autoscaling)
+          ├── Network Policies (pod isolation)
+          ├── PodDisruptionBudget (zero downtime)
+          └── Prometheus + Grafana + Loki (monitoring)
+
+================================================================================
+PREREQUISITES
+================================================================================
+
+  ✅ AWS Account with IAM user (Admin access)
+  ✅ AWS Access Key + Secret Key
+  ✅ GitHub account (ranjan-fullstack/paystream-banking-platform)
+  ✅ EC2 instance running Ubuntu 24.04 — SSH connected via PuTTY
+  ✅ Slack workspace + channel (#paystream-deployments)
+  ✅ Git installed on local machine
+  ✅ Terraform installed on local machine
+
+  NOTE: If your EKS cluster (paystream-cluster), Jenkins EC2, and Terraform
+  state backend are ALREADY live (Phase 1 already applied), do NOT re-run
+  `terraform apply` with renamed project_name/eks_cluster_name/backend
+  values — EKS cluster names can't be renamed in place, so that would
+  destroy and recreate your live cluster. The ECR repos added for the 14
+  PayStream services (infrastructure/ecr.tf) are purely additive and safe
+  to apply on top of existing infra.
+
+================================================================================
+PHASE 1 — TERRAFORM (Create All AWS Infrastructure)
+================================================================================
+
+  ESTIMATED TIME: 20 minutes
+
+  --- Step 1.1: Install Terraform on LOCAL machine ---
+
+    Windows:
+      Download from: https://developer.hashicorp.com/terraform/install
+      Extract terraform.exe → add folder to Windows PATH
+
+    Verify:
+      terraform --version
+
+  --- Step 1.2: Configure AWS CLI on LOCAL machine ---
+
+    aws configure
+      AWS Access Key ID:     <your key>
+      AWS Secret Access Key: <your secret>
+      Default region:        ap-south-1
+      Default output format: json
+
+    Verify:
+      aws sts get-caller-identity
+      (shows your account ID — confirms credentials work)
+
+  --- Step 1.3: Create S3 bucket + DynamoDB for Terraform state ---
+
+    Run ONCE before terraform init:
+
+    aws s3 mb s3://paystream-terraform-state --region ap-south-1
+
+    aws dynamodb create-table \
+      --table-name paystream-terraform-lock \
+      --attribute-definitions AttributeName=LockID,AttributeType=S \
+      --key-schema AttributeName=LockID,KeyType=HASH \
+      --billing-mode PAY_PER_REQUEST \
+      --region ap-south-1
+
+  --- Step 1.4: Create EC2 Key Pair ---
+
+    aws ec2 create-key-pair \
+      --key-name paystream-key \
+      --region ap-south-1 \
+      --query 'KeyMaterial' \
+      --output text > paystream-key.pem
+
+    Windows PuTTY users:
+      Open PuTTYgen → Load paystream-key.pem → Save private key → paystream-key.ppk
+
+  --- Step 1.5: Run Terraform ---
+
+    cd backend/infrastructure
+
+    terraform init
+    terraform plan        ← review what will be created
+    terraform apply       ← type 'yes' when prompted
+
+    What Terraform creates:
+      ✅ VPC + public/private subnets + NAT Gateway
+      ✅ Security Groups
+      ✅ EC2 instance (Jenkins server) with auto-bootstrap script
+      ✅ Elastic IP for Jenkins
+      ✅ EKS cluster (paystream-cluster) + worker nodes
+      ✅ ECR repositories — product-service PLUS one per PayStream service
+         (config-server, discovery-server, api-gateway, auth-service,
+          customer-service, account-service, neft-service, rtgs-service,
+          imps-service, upi-service, transaction-service,
+          fraud-detection-service, notification-service, audit-service)
+      ✅ IAM roles (Jenkins, EKS cluster, EKS nodes, autoscaler)
+
+  --- Step 1.6: Save Terraform outputs ---
+
+    terraform output
+
+    SAVE THESE VALUES — needed in later steps:
+      jenkins_public_ip            = "XX.XX.XX.XX"
+      eks_cluster_name             = "paystream-cluster"
+      ecr_repository_url           = "123456789.dkr.ecr.ap-south-1.amazonaws.com/product-service"
+      paystream_ecr_repository_urls = { account-service = "...", neft-service = "...", ... }
+      kubeconfig_command            = "aws eks update-kubeconfig ..."
+
+================================================================================
+PHASE 2 — EC2 VERIFICATION
+================================================================================
+
+  ESTIMATED TIME: 5 minutes
+
+  --- Step 2.1: Connect to EC2 via PuTTY ---
+
+    Host:     <jenkins_public_ip from terraform output>
+    Port:     22
+    Auth:     paystream-key.ppk
+    Login:    ubuntu
+
+  --- Step 2.2: Verify all tools installed ---
+
+    sudo systemctl status jenkins          ← should be active/running
+    docker ps | grep sonarqube             ← should show sonarqube container
+    java -version                          ← should show 17
+    mvn -version                           ← should show 3.x
+    docker --version
+    kubectl version --client
+    helm version
+    trivy --version
+    aws --version
+
+    NOTE: If Jenkins is not running yet, wait 3-5 minutes.
+          The EC2 user_data bootstrap script takes time on first boot.
+
+  --- Step 2.3: Get Jenkins initial password ---
+
+    sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+    COPY THIS PASSWORD
+
+  --- Step 2.4: Install Nexus Repository ---
+
+    docker run -d \
+      --name nexus \
+      --restart unless-stopped \
+      -p 8082:8081 \
+      -v nexus-data:/nexus-data \
+      sonatype/nexus3
+
+    Wait 2 minutes then get password:
+    docker exec nexus cat /nexus-data/admin.password
+    COPY THIS PASSWORD
+
+================================================================================
+PHASE 3 — JENKINS CONFIGURATION
+================================================================================
+
+  ESTIMATED TIME: 15 minutes
+
+  Open browser: http://<jenkins_public_ip>:8080
+
+  --- Step 3.1: Initial setup ---
+
+    1. Paste initial admin password
+    2. Click "Install suggested plugins"
+    3. Wait for plugins to install
+    4. Create admin user:
+         Username: admin
+         Password: Admin@123
+         Full name: Admin
+         Email:     admin@paystream.com
+
+  --- Step 3.2: Install additional plugins ---
+
+    Jenkins → Manage Jenkins → Plugins → Available
+
+    Search and install each:
+      ✅ SonarQube Scanner
+      ✅ OWASP Dependency-Check
+      ✅ Nexus Artifact Uploader
+      ✅ Slack Notification
+      ✅ Amazon ECR
+      ✅ Docker Pipeline
+      ✅ Pipeline: AWS Steps
+      ✅ HTML Publisher
+      ✅ Blue Ocean
+
+    Click "Restart Jenkins after installation"
+
+  --- Step 3.3: Add credentials ---
+
+    Jenkins → Manage Jenkins → Credentials → Global → Add Credential
+
+    ADD THESE ONE BY ONE:
+
+    [1] AWS Credentials
+        Kind:             AWS Credentials
+        ID:               aws-credentials
+        Access Key ID:    <your AWS access key>
+        Secret Access Key: <your AWS secret key>
+
+    [2] GitHub Credentials
+        Kind:     Username with password
+        ID:       github-credentials
+        Username: ranjan-fullstack
+        Password: <GitHub Personal Access Token>
+        HOW TO GET TOKEN:
+          GitHub → Settings → Developer Settings
+          → Personal Access Tokens → Tokens (classic)
+          → Generate new token
+          → Scopes: ✅ repo, ✅ workflow
+          → Generate → COPY TOKEN
+
+    [3] Nexus Credentials
+        Kind:     Username with password
+        ID:       nexus-credentials
+        Username: admin
+        Password: <nexus password from Step 2.4>
+
+    [4] SonarQube Token (add AFTER Step 4.3)
+        Kind:   Secret text
+        ID:     sonar-token
+        Secret: <token from SonarQube Step 4.3>
+
+    [5] Slack Token
+        Kind:   Secret text
+        ID:     slack-token
+        Secret: <Slack Bot Token>
+        HOW TO GET:
+          Slack → Apps → Build → Create New App
+          → OAuth & Permissions → Bot Token Scopes → chat:write
+          → Install to Workspace → Copy Bot User OAuth Token
+
+  --- Step 3.4: Configure SonarQube server ---
+
+    Jenkins → Manage Jenkins → Configure System
+    Scroll to "SonarQube servers" → Add SonarQube:
+      Name:               SonarQube
+      Server URL:         http://localhost:9001
+      Server auth token:  sonar-token
+
+  --- Step 3.5: Configure SonarQube Scanner tool ---
+
+    Jenkins → Manage Jenkins → Global Tool Configuration
+    Scroll to "SonarQube Scanner" → Add SonarQube Scanner:
+      Name:                  SonarQube Scanner
+      Install automatically: ✅
+
+  --- Step 3.6: Configure Slack ---
+
+    Jenkins → Manage Jenkins → Configure System
+    Scroll to "Slack":
+      Workspace:       <your-slack-workspace-name>
+      Credential:      slack-token
+      Default channel: #paystream-deployments
+    Click "Test Connection" — should show SUCCESS
+
+  --- Step 3.7: Configure Maven settings.xml for Nexus ---
+
+    On EC2, run:
+
+    sudo mkdir -p /var/jenkins_home/.m2
+    sudo tee /var/jenkins_home/.m2/settings.xml << 'EOF'
+    <settings>
+      <servers>
+        <server>
+          <id>nexus</id>
+          <username>admin</username>
+          <password>YOUR_NEXUS_PASSWORD_HERE</password>
+        </server>
+      </servers>
+    </settings>
+    EOF
+
+  --- Step 3.8: Create Jenkins Pipeline Job ---
+
+    Jenkins → New Item
+      Name: paystream-banking-platform
+      Type: Pipeline
+      → OK
+
+    Configure:
+      Build Triggers:
+        ✅ Trigger builds remotely
+        Authentication Token: paystream-token
+
+      Pipeline:
+        Definition:     Pipeline script from SCM
+        SCM:            Git
+        Repository URL: https://github.com/ranjan-fullstack/paystream-banking-platform.git
+        Credentials:    github-credentials
+        Branch:         */main
+        Script Path:    backend/Jenkinsfile
+
+    → Save
+
+    NOTE: This ONE job builds the full Maven reactor (all 15 modules), then
+    loops over all 14 deployable services for Docker build + Trivy scan +
+    ECR push (see Jenkinsfile stage "Docker Build + Trivy Scan + Push (per
+    service)"). There is no separate Jenkins job per microservice.
+
+  --- Step 3.9: Get Jenkins API Token ---
+
+    Jenkins → admin (top-right) → Configure
+    → API Token → Add new Token
+    Name: github-trigger
+    → Generate → COPY THIS TOKEN
+    (needed for GitHub Secrets in Phase 8)
+
+================================================================================
+PHASE 4 — SONARQUBE CONFIGURATION
+================================================================================
+
+  ESTIMATED TIME: 5 minutes
+
+  Open browser: http://<jenkins_public_ip>:9001
+  Login: admin / admin → change password when prompted
+
+  --- Step 4.1: Create project ---
+
+    Projects → Create Project → Manually
+      Project key:  paystream-banking-platform
+      Display name: PayStream Banking Platform
+    → Set Up
+
+  --- Step 4.2: Generate token ---
+
+    My Account (top-right) → Security → Tokens
+      Name: jenkins-token
+      Type: Global Analysis Token
+    → Generate → COPY TOKEN
+
+    Go back to Jenkins Step 3.3 [4] and add this token as sonar-token credential
+
+  --- Step 4.3: Configure Quality Gate ---
+
+    Quality Gates → Create
+      Name: PayStream Gate
+      Add Conditions:
+        ✅ Coverage is less than 70%        → ERROR
+        ✅ Duplicated Lines (%) > 3%        → ERROR
+        ✅ Reliability Rating worse than A  → ERROR
+        ✅ Security Rating worse than A     → ERROR
+        ✅ Maintainability Rating worse than A → ERROR
+    → Set as Default
+
+================================================================================
+PHASE 5 — NEXUS CONFIGURATION
+================================================================================
+
+  ESTIMATED TIME: 3 minutes
+
+  Open browser: http://<jenkins_public_ip>:8082
+  Login: admin / <password from Step 2.4>
+  → Change password when prompted
+  → Enable anonymous access: YES
+
+  --- Step 5.1: Create Maven repository ---
+
+    Settings (gear icon) → Repositories → Create Repository
+      Recipe:          maven2 (hosted)
+      Name:            maven-releases
+      Version Policy:  Release
+      Deployment Policy: Allow Redeploy
+    → Create Repository
+
+================================================================================
+PHASE 6 — EKS CLUSTER SETUP
+================================================================================
+
+  ESTIMATED TIME: 30 minutes
+  NOTE: All commands run on EC2 via PuTTY
+
+  --- Step 6.1: Configure kubectl ---
+
+    Run the command from terraform output:
+    aws eks update-kubeconfig --region ap-south-1 --name paystream-cluster
+
+    Verify:
+    kubectl get nodes
+    (should show 2 nodes as Ready)
+
+  --- Step 6.2: Create namespaces ---
+
+    kubectl create namespace paystream
+    kubectl create namespace paystream-dev
+    kubectl create namespace paystream-staging
+    kubectl create namespace paystream-prod
+    kubectl create namespace monitoring
+    kubectl create namespace argocd
+    kubectl create namespace istio-system
+
+  --- Step 6.3: Apply RBAC + quotas ---
+
+    cd ~/paystream-banking-platform
+    kubectl apply -f k8s/rbac/jenkins-rbac.yaml
+    kubectl apply -f k8s/quota/namespace-dev.yaml -n paystream-dev
+    kubectl apply -f k8s/quota/namespace-staging.yaml -n paystream-staging
+    kubectl apply -f k8s/quota/namespace-prod.yaml -n paystream-prod
+
+  --- Step 6.4: Install AWS Load Balancer Controller ---
+
+    curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.7.0/docs/install/iam_policy.json
+
+    aws iam create-policy \
+      --policy-name AWSLoadBalancerControllerIAMPolicy \
+      --policy-document file://iam_policy.json
+
+    helm repo add eks https://aws.github.io/eks-charts
+    helm repo update
+
+    helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+      --namespace kube-system \
+      --set clusterName=paystream-cluster \
+      --set serviceAccount.create=true \
+      --set serviceAccount.name=aws-load-balancer-controller
+
+    Verify:
+    kubectl get deployment aws-load-balancer-controller -n kube-system
+
+  --- Step 6.5: Install Istio Service Mesh ---
+
+    curl -L https://istio.io/downloadIstio | sh -
+    cd istio-*/
+    export PATH=$PWD/bin:$PATH
+    cd ~
+
+    istioctl install --set profile=demo -y
+
+    kubectl label namespace paystream-prod istio-injection=enabled
+
+    kubectl apply -f ~/paystream-banking-platform/k8s/istio/ -n paystream-prod
+
+    Verify:
+    kubectl get pods -n istio-system
+    (all pods should be Running)
+
+    NOTE: k8s/istio/destination-rule.yaml and virtual-service.yaml ship as a
+    representative template for account-service only. Copy + adapt
+    (name/host swapped) for the other 13 services as you bring them under
+    the mesh.
+
+  --- Step 6.6: Install ArgoCD ---
+
+    kubectl apply -n argocd \
+      -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+    Wait for ArgoCD to be ready:
+    kubectl wait --for=condition=available deployment/argocd-server \
+      --namespace argocd --timeout=180s
+
+    Get ArgoCD admin password:
+    kubectl -n argocd get secret argocd-initial-admin-secret \
+      -o jsonpath="{.data.password}" | base64 -d && echo
+    COPY THIS PASSWORD
+
+    Expose ArgoCD UI (run in background):
+    kubectl port-forward svc/argocd-server -n argocd 8083:443 &
+
+    Open: https://localhost:8083
+    OR: Access from your local machine using SSH tunnel:
+      SSH tunnel: ssh -L 8083:localhost:8083 ubuntu@<EC2-IP> -i paystream-key.pem
+      Then open: https://localhost:8083
+    Login: admin / <password from above>
+
+  --- Step 6.7: Install Argo Rollouts ---
+
+    kubectl create namespace argo-rollouts
+
+    kubectl apply -n argo-rollouts \
+      -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+
+    Install kubectl plugin:
+    curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+    chmod +x kubectl-argo-rollouts-linux-amd64
+    sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+    Verify:
+    kubectl get pods -n argo-rollouts
+
+  --- Step 6.8: Install Cluster Autoscaler ---
+
+    kubectl apply -f ~/paystream-banking-platform/k8s/cluster-autoscaler/cluster-autoscaler.yaml
+
+    Verify:
+    kubectl get pods -n kube-system | grep cluster-autoscaler
+
+  --- Step 6.9: Install External Secrets Operator ---
+
+    helm repo add external-secrets https://charts.external-secrets.io
+    helm repo update
+
+    helm install external-secrets external-secrets/external-secrets \
+      --namespace external-secrets \
+      --create-namespace
+
+    Verify:
+    kubectl get pods -n external-secrets
+
+  --- Step 6.10: Install Monitoring Stack ---
+
+    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+    helm repo add grafana https://grafana.github.io/helm-charts
+    helm repo update
+
+    # Prometheus + Grafana + Alertmanager
+    helm install prometheus-stack prometheus-community/kube-prometheus-stack \
+      --namespace monitoring \
+      --set grafana.adminPassword=Admin@123 \
+      --set prometheus.prometheusSpec.retention=7d \
+      --set alertmanager.enabled=true
+
+    # Loki + Promtail (log aggregation)
+    helm install loki grafana/loki-stack \
+      --namespace monitoring \
+      --set promtail.enabled=true \
+      --set loki.persistence.enabled=true \
+      --set loki.persistence.size=10Gi
+
+    Verify:
+    kubectl get pods -n monitoring
+    (wait until all pods are Running — takes 3-5 minutes)
+
+  --- Step 6.11: Provision PayStream Kafka topics on MSK ---
+
+    kubectl apply -f ~/paystream-banking-platform/k8s/kafka/topics-job.yaml
+
+    Verify:
+    kubectl logs -n paystream job/paystream-kafka-topics-init
+    (should print "PayStream Kafka topics created.")
+
+  --- Step 6.12: Apply representative NetworkPolicy / Vault / Reloader ---
+
+    kubectl apply -f ~/paystream-banking-platform/k8s/network-policy/ -n paystream-prod
+    kubectl apply -f ~/paystream-banking-platform/k8s/vault/vault-auth.yaml
+
+    NOTE: account-service-netpol.yaml and vault-auth.yaml ship as a
+    representative template (account-service only) — replicate the
+    pattern (Deployment/Service/HPA/PDB are already generic via the Helm
+    chart; only Istio/NetworkPolicy/Vault need per-service copies today).
+
+================================================================================
+PHASE 7 — ARGOCD APPLICATIONS SETUP
+================================================================================
+
+  ESTIMATED TIME: 5 minutes
+
+  --- Step 7.1: Connect ArgoCD to GitHub repo ---
+
+    ArgoCD UI → Settings → Repositories → Connect Repo
+      Type:     Git
+      URL:      https://github.com/ranjan-fullstack/paystream-banking-platform.git
+      Username: ranjan-fullstack
+      Password: <GitHub Personal Access Token from Step 3.3>
+    → Connect
+    (should show CONNECTION STATUS: Successful)
+
+  --- Step 7.2: Create ArgoCD ApplicationSets ---
+
+    Each file is an ApplicationSet (not a single Application) — it uses a
+    "list" generator over all 14 PayStream service names and generates one
+    ArgoCD Application per service, all pointing at the SAME generic chart
+    (helm/paystream-service/) with that service's values/<service>.yaml
+    layered on top.
+
+    kubectl apply -f ~/paystream-banking-platform/k8s/argocd/application-dev.yaml
+    kubectl apply -f ~/paystream-banking-platform/k8s/argocd/application-staging.yaml
+    kubectl apply -f ~/paystream-banking-platform/k8s/argocd/application-prod.yaml
+
+    Verify in ArgoCD UI — you should see 14 apps per environment (42 total):
+      config-server-dev, discovery-server-dev, api-gateway-dev,
+      auth-service-dev, customer-service-dev, account-service-dev,
+      neft-service-dev, rtgs-service-dev, imps-service-dev, upi-service-dev,
+      transaction-service-dev, fraud-detection-service-dev,
+      notification-service-dev, audit-service-dev    → Status: Synced (auto)
+
+      <same 14, suffixed -staging>                     → Status: Synced (auto)
+      <same 14, suffixed -prod>                        → Status: OutOfSync (manual only)
+
+================================================================================
+PHASE 8 — GITHUB SETUP
+================================================================================
+
+  ESTIMATED TIME: 5 minutes
+
+  --- Step 8.1: Add GitHub Secrets ---
+
+    GitHub → your repo → Settings
+    → Secrets and variables → Actions → New repository secret
+
+    Add ALL of these:
+
+    Name: JENKINS_URL
+    Value: http://<jenkins_public_ip>:8080
+
+    Name: JENKINS_USER
+    Value: admin
+
+    Name: JENKINS_API_TOKEN
+    Value: <token from Jenkins Step 3.9>
+
+    Name: JENKINS_JOB_TOKEN
+    Value: paystream-token
+
+    Name: AWS_ACCOUNT_ID
+    Value: <your 12-digit AWS account ID>
+    (find it: aws sts get-caller-identity --query Account --output text)
+
+  --- Step 8.2: Enable Branch Protection ---
+
+    GitHub → Settings → Branches → Add rule
+      Branch name pattern: main
+      ✅ Require a pull request before merging
+      ✅ Require approvals: 1
+      ✅ Require status checks to pass:
+           Add: "Build & Test"
+      ✅ Require branches to be up to date
+      ✅ Do not allow bypassing the above settings
+    → Save changes
+
+================================================================================
+PHASE 9 — AWS SECRETS MANAGER
+================================================================================
+
+  ESTIMATED TIME: 5 minutes (one secret per PayStream service)
+
+  Run on EC2, once per service (example shown for account-service —
+  repeat for the other 13, swapping db_password per that service's
+  config-repo/<service>.yml):
+
+  aws secretsmanager create-secret \
+    --name paystream/account-service \
+    --region ap-south-1 \
+    --secret-string '{
+      "db_password":    "YourDBPassword123",
+      "jwt_secret":     "YourJWTSecretKey256BitsLongString!",
+      "aws_access_key": "AKIAIOSFODNN7EXAMPLE",
+      "aws_secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    }'
+
+  No External Secret K8s manifest ships yet for any PayStream service
+  (k8s/product-service/external-secret.yaml was specific to the removed
+  product-service). Once you've created the AWS secrets above, add an
+  ExternalSecret resource per service referencing paystream/<service> and
+  targeting the same namespace as that service's Helm release.
+
+================================================================================
+PHASE 10 — FIRST DEPLOYMENT TEST
+================================================================================
+
+  ESTIMATED TIME: 10 minutes
+
+  --- Step 10.1: Push code from LOCAL machine ---
+
+    cd f:/projects/paystream-banking-platform
+
+    git add .
+    git commit -m "feat: complete PayStream devops setup - first deployment"
+    git push origin main
+
+  --- Step 10.2: Watch Jenkins pipeline ---
+
+    Open: http://<jenkins_public_ip>:8080
+    → Click: paystream-banking-platform
+    → Watch Blue Ocean view
+
+    Expected stages:
+      ✅ Checkout
+      ✅ Build & Test (full reactor — all 15 modules)
+      ✅ OWASP Dependency Check
+      ✅ SonarQube Analysis
+      ✅ Quality Gate
+      ✅ Package + Upload to Nexus
+      ✅ Docker Build + Trivy Scan + Push (per service) — loops all 14 services
+      ✅ Update Image Tags in Git (GitOps) — updates all 14 values/<service>.yaml
+
+  --- Step 10.3: Watch SonarQube results ---
+
+    Open: http://<jenkins_public_ip>:9001
+    → paystream-banking-platform project
+    → Check: Bugs, Vulnerabilities, Code Smells, Coverage
+    → Quality Gate: PASSED ✅
+
+  --- Step 10.4: Watch ArgoCD sync DEV and STAGING ---
+
+    Open: https://localhost:8083 (ArgoCD)
+    → all 14 <service>-dev apps     → Syncing → Healthy ✅
+    → all 14 <service>-staging apps → Syncing → Healthy ✅
+    → all 14 <service>-prod apps    → OutOfSync (waiting for you)
+
+  --- Step 10.5: Watch rollout in DEV ---
+
+    kubectl get pods -n paystream-dev -w
+
+    (No Argo Rollouts canary is configured for any PayStream service yet —
+    deployments roll out via the standard Kubernetes Deployment rolling
+    update strategy. See k8s/istio/virtual-service.yaml's note on adding
+    canary subsets once a Rollout resource exists for a service.)
+
+  --- Step 10.6: Approve PROD deployment ---
+
+    For each service, in ArgoCD UI → <service>-prod → SYNC → Synchronize
+    (or script it: `argocd app sync <service>-prod` in a loop, as the
+    Jenkinsfile/.github/workflows/ci.yml deploy-prod job already does).
+
+  --- Step 10.7: Verify application is accessible ---
+
+    kubectl get ingress -n paystream-prod
+    (only api-gateway has ingress.enabled — copy its ADDRESS, the AWS ALB public URL)
+
+    Test in browser or Postman:
+    POST http://<alb-url>/auth/v1/login
+    GET  http://<alb-url>/api/v1/accounts/<accountNumber>/balance
+    Expected: 200 OK (after obtaining a JWT from /auth/v1/login)
+
+  --- Step 10.8: Check monitoring ---
+
+    Access Grafana:
+    kubectl port-forward svc/prometheus-stack-grafana 3000:80 -n monitoring
+    Open: http://localhost:3000
+    Login: admin / Admin@123
+
+    Dashboards to check:
+      → Kubernetes / Compute Resources / Namespace (paystream-prod)
+      → Kubernetes / Pods
+      → Loki logs: {app="account-service"}  (swap app label per service)
+
+================================================================================
+QUICK REFERENCE — ALL URLS
+================================================================================
+
+  Service       URL
+  ─────────────────────────────────────────────────
+  Jenkins       http://<EC2-IP>:8080
+  SonarQube     http://<EC2-IP>:9001
+  Nexus         http://<EC2-IP>:8082
+  ArgoCD        https://<EC2-IP>:8083 (or SSH tunnel)
+  Grafana       kubectl port-forward → http://localhost:3000
+  App (DEV)     kubectl get ingress -n paystream-dev      (api-gateway only)
+  App (STAGING) kubectl get ingress -n paystream-staging  (api-gateway only)
+  App (PROD)    kubectl get ingress -n paystream-prod     (api-gateway only)
+  ECR           AWS Console → ECR → one repo per service (account-service, neft-service, ...)
+
+================================================================================
+QUICK REFERENCE — ALL CREDENTIALS
+================================================================================
+
+  Service     Username   Password / Token
+  ─────────────────────────────────────────────────────────
+  Jenkins     admin      Admin@123
+  SonarQube   admin      (set during setup)
+  Nexus       admin      (from docker exec command)
+  ArgoCD      admin      (from kubectl get secret command)
+  Grafana     admin      Admin@123
+  EC2 SSH     ubuntu     paystream-key.ppk
+
+================================================================================
+PHASE ORDER + TIME ESTIMATE
+================================================================================
+
+  Phase 1  → Terraform           (EC2 + EKS + ECR + VPC)     ~20 min
+  Phase 2  → EC2 verification    (verify all tools running)    ~5 min
+  Phase 3  → Jenkins config      (plugins + creds + job)       ~15 min
+  Phase 4  → SonarQube config    (project + gate + token)      ~5 min
+  Phase 5  → Nexus config        (maven-releases repo)         ~3 min
+  Phase 6  → EKS setup           (ALB+Istio+ArgoCD+monitor)    ~30 min
+  Phase 7  → ArgoCD apps         (connect git + 3 apps)        ~5 min
+  Phase 8  → GitHub secrets      (secrets + branch rules)      ~5 min
+  Phase 9  → AWS Secrets Manager (create secret values)        ~2 min
+  Phase 10 → First deployment    (push + verify pipeline)      ~10 min
+
+  TOTAL ESTIMATED TIME: ~100 minutes
+
+================================================================================
+WHAT EACH TOOL DOES (FOR INTERVIEW)
+================================================================================
+
+  Jenkins          → CI server. Builds, tests, scans, pushes image to ECR.
+                     Does NOT deploy — that is ArgoCD's job.
+
+  SonarQube        → Scans Java code for bugs, vulnerabilities, code smells,
+                     test coverage. Pipeline STOPS if quality gate fails.
+
+  OWASP            → Scans Maven dependencies (Spring, Kafka libs) against
+                     known CVE database. Fails on HIGH/CRITICAL CVEs.
+
+  Nexus            → Stores versioned JAR files. Every build = one traceable
+                     artifact. Teams can download any past version.
+
+  Trivy            → Scans Docker image layers for OS and library CVEs.
+                     Fails pipeline if CRITICAL vulnerability found.
+
+  AWS ECR          → Private Docker registry on AWS. Stores all image versions.
+                     Has built-in scan-on-push feature.
+
+  Terraform        → Creates ALL AWS infrastructure as code. EC2, EKS, VPC,
+                     ECR, IAM roles — everything in .tf files, tracked in Git.
+
+  Helm             → Kubernetes package manager. One chart, three environments
+                     (dev/staging/prod) with different values files.
+
+  ArgoCD           → GitOps CD tool. Watches Git repo for changes.
+                     When image tag changes → auto deploys to DEV+STAGING.
+                     PROD requires manual approval click.
+
+  Argo Rollouts    → Canary deployment. Routes 20% traffic to new version,
+                     waits, checks Prometheus metrics, then 50%, then 100%.
+                     Auto rollback if error rate exceeds threshold.
+
+  Istio            → Service mesh. Encrypts all pod-to-pod traffic (mTLS).
+                     Also handles retries, timeouts, circuit breaking at
+                     infrastructure level (not application code).
+
+  External Secrets → Pulls secrets from AWS Secrets Manager into K8s Secrets.
+                     Refreshes every hour. No plaintext secrets in Git.
+
+  Cluster CA       → Watches pending pods. If pods can't schedule due to
+                     insufficient nodes → adds new EC2 nodes automatically.
+
+  HPA              → Watches CPU/Memory of pods. Scales pods 2 → 10.
+                     Works WITH Cluster Autoscaler (CA adds nodes when needed).
+
+  Network Policy   → Firewall rules for pods. account-service (representative
+                     template — see k8s/network-policy/) can ONLY talk to:
+                     api-gateway, neft/rtgs/imps/upi-service, postgres, kafka,
+                     discovery-server, config-server.
+
+  PDB              → Guarantees minimum 1 pod always running during node
+                     drain, upgrades, or maintenance windows.
+
+  Prometheus       → Scrapes metrics from all pods every 15 seconds.
+                     Stores time-series data for querying.
+
+  Grafana          → Dashboards on top of Prometheus + Loki data.
+                     Shows CPU, memory, request rate, error rate, latency.
+
+  Loki             → Aggregates logs from all pods. Query with LogQL.
+                     Integrated into Grafana as data source.
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+  Jenkins job not triggering:
+    → Check GitHub secrets JENKINS_URL, JENKINS_USER, JENKINS_API_TOKEN
+    → Check Jenkins job token matches JENKINS_JOB_TOKEN
+    → Check GitHub Actions tab for errors
+
+  SonarQube quality gate failing:
+    → Open SonarQube → project → see exact failing conditions
+    → Check test coverage (run: mvn verify with jacoco)
+
+  ECR push failing:
+    → Check aws-credentials in Jenkins
+    → Verify IAM user has AmazonEC2ContainerRegistryFullAccess policy
+
+  ArgoCD not syncing:
+    → Check repo connection in ArgoCD Settings → Repositories
+    → Check the relevant helm/paystream-service/values/<service>.yaml has
+      correct image.repository and image.tag
+    → kubectl logs -n argocd deploy/argocd-application-controller
+    → kubectl logs -n argocd deploy/argocd-applicationset-controller
+      (ApplicationSet-specific — generates the per-service Applications)
+
+  Pods not starting in EKS:
+    → kubectl describe pod <pod-name> -n paystream-prod
+    → kubectl logs <pod-name> -n paystream-prod
+    → Check External Secret synced: kubectl get externalsecret -n paystream-prod
+
+  No external URL (ingress ADDRESS empty):
+    → kubectl get pods -n kube-system | grep aws-load-balancer
+    → Check ALB controller is running
+    → kubectl logs -n kube-system deploy/aws-load-balancer-controller
+
+================================================================================
+FILE STRUCTURE REFERENCE
+================================================================================
+
+  backend/
+  ├── Jenkinsfile                         ← CI pipeline (loops all 14 services)
+  ├── .github/workflows/ci.yml            ← GitHub Actions (matrix over 14 services)
+  ├── docker-compose.yml                  ← local dev — all 14 services + infra
+  ├── postgres-init/                      ← creates 8 PayStream Postgres DBs on first boot
+  ├── mysql-init/                         ← creates 3 PayStream MySQL DBs on first boot
+  ├── config-repo/                        ← Spring Cloud Config — one yml per service
+  ├── docs/asyncapi.yml                   ← Kafka topic catalog (AsyncAPI spec)
+  ├── infrastructure/                     ← Terraform (all AWS infra)
+  │   ├── backend.tf                      ← S3 state + provider
+  │   ├── vpc.tf                          ← VPC + subnets + NAT
+  │   ├── security-groups.tf              ← firewall rules
+  │   ├── ec2.tf                          ← Jenkins server
+  │   ├── ecr.tf                          ← product-service repo + 14 PayStream repos
+  │   ├── eks.tf                          ← Kubernetes cluster
+  │   ├── iam.tf                          ← all IAM roles
+  │   ├── variables.tf                    ← configurable values
+  │   └── outputs.tf                      ← IPs, URLs, cluster name, per-service ECR URLs
+  ├── helm/paystream-service/              ← ONE generic Helm chart for all 14 services
+  │   ├── Chart.yaml
+  │   ├── values.yaml                     ← shared defaults
+  │   ├── values-dev.yaml                 ← dev environment overrides
+  │   ├── values-staging.yaml             ← staging environment overrides
+  │   ├── values-prod.yaml                ← prod environment overrides
+  │   ├── values/                         ← per-service overrides (one file per service)
+  │   │   ├── account-service.yaml        ← serviceName, image.repository, image.tag, port
+  │   │   ├── neft-service.yaml
+  │   │   └── ... (14 files total)
+  │   └── templates/                      ← Deployment, Service, HPA, PDB, Ingress
+  └── k8s/
+      ├── argocd/                         ← ApplicationSets (one per env, generate 14 apps each)
+      ├── kafka/topics-job.yaml            ← provisions all PayStream Kafka topics on MSK
+      ├── cluster-autoscaler/             ← node autoscaling
+      ├── istio/                          ← mTLS + routing (account-service template — replicate per service)
+      ├── monitoring/                     ← Prometheus + Grafana + Loki
+      ├── network-policy/                 ← pod-to-pod firewall (account-service template — replicate per service)
+      ├── quota/                          ← ResourceQuota/LimitRange per environment
+      ├── rbac/                           ← Jenkins K8s permissions
+      └── vault/                          ← Vault auth (account-service template — replicate per service)
+
+================================================================================
+                         GOOD LUCK WITH YOUR INTERVIEW!
+================================================================================

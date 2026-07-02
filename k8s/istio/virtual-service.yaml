@@ -1,0 +1,32 @@
+# Representative template — replicate this VirtualService (name + host swapped)
+# for each of the other 13 PayStream services once Istio sidecar injection is
+# enabled for their namespace.
+#
+# NOTE: weighted canary routing (stable/canary subsets) requires an Argo
+# Rollouts Rollout resource defining those subsets — none exists yet for
+# any PayStream service, so this routes 100% of traffic to account-service
+# directly. Add stable/canary subsets + weighted routing once a Rollout is
+# defined for a given service.
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: account-service
+  namespace: paystream-prod
+spec:
+  hosts:
+    - account-service
+  http:
+    - route:
+        - destination:
+            host: account-service
+            port:
+              number: 80
+
+    # Retry policy — retry failed requests automatically
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: gateway-error,connect-failure,retriable-4xx
+
+    # Timeout
+    timeout: 10s

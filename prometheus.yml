@@ -1,0 +1,80 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+# ✅ SLO alerting rules
+rule_files:
+  - "prometheus-rules.yml"
+
+scrape_configs:
+
+  # ✅ LOCAL SERVICES (running from IDE on host machine ports)
+  - job_name: 'config-server-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8888']
+
+  - job_name: 'discovery-server-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8761']
+
+  - job_name: 'api-gateway-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9000']
+
+  - job_name: 'auth-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9005']
+
+  - job_name: 'customer-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9002']
+
+  - job_name: 'account-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9003']
+
+  - job_name: 'neft-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9004']
+
+  - job_name: 'rtgs-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9012']
+
+  - job_name: 'imps-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9006']
+
+  - job_name: 'upi-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9007']
+
+  - job_name: 'transaction-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9008']
+
+  - job_name: 'fraud-detection-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9009']
+
+  - job_name: 'notification-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9010']
+
+  - job_name: 'audit-service-local'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:9011']

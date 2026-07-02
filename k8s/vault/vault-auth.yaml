@@ -1,0 +1,26 @@
+# Vault Kubernetes Auth — allows pods to authenticate with Vault using K8s service account
+# Apply AFTER Vault is installed and initialized
+#
+# Representative template — replicate this ServiceAccount (name + namespace
+# adjusted) for each of the other 13 PayStream services that need Vault access.
+
+# Service Account for account-service pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: account-service-sa
+  namespace: paystream-prod
+---
+# Role binding to allow Vault to verify the service account token
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: account-service-sa
+    namespace: paystream-prod

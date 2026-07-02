@@ -1,0 +1,359 @@
+openapi: 3.0.3
+info:
+  title: PayStream IMPS Service
+  version: 1.0.0
+  description: |
+    Handles Immediate Payment Service (IMPS) transfers — 24x7 instant transfers,
+    either by account number + IFSC or by mobile number + MMID. All endpoints
+    require a Bearer JWT (enforced by the API Gateway).
+servers:
+  - url: http://localhost:9006
+    description: imps-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: IMPS Transfer
+  - name: MMID
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/imps/transfer:
+    post:
+      tags: [IMPS Transfer]
+      summary: Initiate an IMPS transfer
+      description: |
+        `transferMode` determines which beneficiary fields are required:
+        - `ACCOUNT_IFSC`: requires `beneficiaryAccountNumber` and `beneficiaryIfsc`
+        - `MOBILE_MMID`: requires `beneficiaryMobile` and `beneficiaryMmid`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImpsTransferRequest'
+            example:
+              customerId: CUST00000001
+              transferMode: ACCOUNT_IFSC
+              senderAccountNumber: '1234567890123456'
+              senderMobile: '9876543210'
+              beneficiaryAccountNumber: '6543210987654321'
+              beneficiaryIfsc: HDFC0001234
+              beneficiaryName: John Smith
+              amount: 5000.00
+              remarks: Dinner split
+      responses:
+        '201':
+          description: Transfer completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImpsTransactionResponse'
+              example:
+                impsReferenceNumber: IMPS2026062800001
+                transferMode: ACCOUNT_IFSC
+                senderAccountNumber: '1234567890123456'
+                beneficiaryName: John Smith
+                amount: 5000.00
+                status: COMPLETED
+                rrn: '312345678901'
+                initiatedAt: '2026-06-28T11:30:00'
+                completedAt: '2026-06-28T11:30:02'
+                failureReason: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid sender/beneficiary account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 422, error: INVALID_ACCOUNT, message: 'Beneficiary account could not be validated' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/imps/{referenceNumber}:
+    get:
+      tags: [IMPS Transfer]
+      summary: Track an IMPS transfer by reference number
+      parameters:
+        - name: referenceNumber
+          in: path
+          required: true
+          schema:
+            type: string
+          example: IMPS2026062800001
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImpsTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/imps/customer/{customerId}/history:
+    get:
+      tags: [IMPS Transfer]
+      summary: Get IMPS transaction history for a customer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUST00000001
+      responses:
+        '200':
+          description: List of IMPS transactions (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ImpsTransactionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/imps/mmid/register:
+    post:
+      tags: [MMID]
+      summary: Register a Mobile Money Identifier (MMID) for an account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MmidRegisterRequest'
+            example:
+              customerId: CUST00000001
+              accountNumber: '1234567890123456'
+              mobileNumber: '9876543210'
+      responses:
+        '201':
+          description: MMID registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MmidResponse'
+              example:
+                accountNumber: '1234567890123456'
+                mobileNumber: '9876543210'
+                mmid: '9876543'
+                active: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Account could not be validated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 422, error: INVALID_ACCOUNT, message: 'Account could not be validated' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/imps/mmid/{mobile}:
+    get:
+      tags: [MMID]
+      summary: Look up MMID registration by mobile number
+      parameters:
+        - name: mobile
+          in: path
+          required: true
+          schema:
+            type: string
+          example: '9876543210'
+      responses:
+        '200':
+          description: MMID registration found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MmidResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No MMID registration found for this mobile number
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: MMID_NOT_FOUND, message: 'No MMID registration found for this mobile number' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ImpsStatus:
+      type: string
+      enum: [INITIATED, PROCESSING, COMPLETED, FAILED]
+    TransferMode:
+      type: string
+      enum: [ACCOUNT_IFSC, MOBILE_MMID]
+    ImpsTransferRequest:
+      type: object
+      required: [customerId, transferMode, senderAccountNumber, beneficiaryName, amount]
+      properties:
+        customerId:
+          type: string
+        transferMode:
+          $ref: '#/components/schemas/TransferMode'
+        senderAccountNumber:
+          type: string
+        senderMobile:
+          type: string
+        beneficiaryAccountNumber:
+          type: string
+          description: Required when transferMode is ACCOUNT_IFSC
+        beneficiaryIfsc:
+          type: string
+          description: Required when transferMode is ACCOUNT_IFSC
+        beneficiaryMobile:
+          type: string
+          description: Required when transferMode is MOBILE_MMID
+        beneficiaryMmid:
+          type: string
+          description: Required when transferMode is MOBILE_MMID
+        beneficiaryName:
+          type: string
+        amount:
+          type: number
+          format: double
+          minimum: 1.00
+          maximum: 500000.00
+        remarks:
+          type: string
+    ImpsTransactionResponse:
+      type: object
+      properties:
+        impsReferenceNumber:
+          type: string
+        transferMode:
+          $ref: '#/components/schemas/TransferMode'
+        senderAccountNumber:
+          type: string
+        beneficiaryName:
+          type: string
+        amount:
+          type: number
+          format: double
+        status:
+          $ref: '#/components/schemas/ImpsStatus'
+        rrn:
+          type: string
+          description: Remittance Reference Number
+        initiatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        failureReason:
+          type: string
+          nullable: true
+    MmidRegisterRequest:
+      type: object
+      required: [customerId, accountNumber, mobileNumber]
+      properties:
+        customerId:
+          type: string
+        accountNumber:
+          type: string
+        mobileNumber:
+          type: string
+          pattern: '^[6-9]\d{9}$'
+    MmidResponse:
+      type: object
+      properties:
+        accountNumber:
+          type: string
+        mobileNumber:
+          type: string
+        mmid:
+          type: string
+        active:
+          type: boolean
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 400, error: VALIDATION_FAILED, message: 'mobileNumber must be a valid 10-digit Indian mobile number' }
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Transaction not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'IMPS transaction not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

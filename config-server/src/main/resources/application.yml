@@ -1,0 +1,35 @@
+server:
+  port: 8888
+
+spring:
+  application:
+    name: config-server
+
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: file:${CONFIG_REPO_PATH:./config-repo}
+           #search-locations: file:/config-repo
+  profiles:
+    active: native
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans
+
+encrypt:
+  key: my-secret-key-123
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka

@@ -1,0 +1,317 @@
+openapi: 3.0.3
+info:
+  title: PayStream Fraud Detection Service
+  version: 1.0.0
+  description: |
+    Surfaces fraud alerts raised by the rule engine and lets compliance/admin staff
+    review them and tune detection rules. All endpoints require a Bearer JWT
+    (enforced by the API Gateway). In addition, the caller's role must be forwarded
+    via `X-USER-ROLE`: alert endpoints require FRAUD_ANALYST or ADMIN; rule endpoints
+    require ADMIN.
+servers:
+  - url: http://localhost:9009
+    description: fraud-detection-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: Alerts
+  - name: Rules
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/fraud/alerts:
+    get:
+      tags: [Alerts]
+      summary: List all fraud alerts
+      description: Requires caller role FRAUD_ANALYST or ADMIN.
+      responses:
+        '200':
+          description: List of alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FraudAlertResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/fraud/alerts/{id}:
+    get:
+      tags: [Alerts]
+      summary: Get a single fraud alert
+      description: Requires caller role FRAUD_ANALYST or ADMIN.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        '200':
+          description: Alert found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudAlertResponse'
+              example:
+                id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                accountNumber: '1234567890123456'
+                transactionReference: NEFT2026062800001
+                ruleTriggered: DAILY_LIMIT_BREACH
+                riskScore: 85
+                action: ALERT
+                status: OPEN
+                reviewRemarks: null
+                createdAt: '2026-06-28T10:31:00'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/fraud/alerts/{id}/review:
+    put:
+      tags: [Alerts]
+      summary: Review (close/acknowledge) a fraud alert
+      description: Requires caller role FRAUD_ANALYST or ADMIN.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertReviewRequest'
+            example:
+              status: REVIEWED
+              remarks: Confirmed with customer, transaction is legitimate
+      responses:
+        '200':
+          description: Alert updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudAlertResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/fraud/rules:
+    get:
+      tags: [Rules]
+      summary: List all fraud detection rules
+      description: Requires caller role ADMIN.
+      responses:
+        '200':
+          description: List of rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FraudRuleResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/fraud/rules/{id}:
+    put:
+      tags: [Rules]
+      summary: Update a fraud detection rule
+      description: Requires caller role ADMIN.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FraudRuleUpdateRequest'
+            example:
+              threshold: 500000.00
+              action: BLOCK
+              active: true
+      responses:
+        '200':
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudRuleResponse'
+              example:
+                id: 1b1b1b1b-2c2c-3d3d-4e4e-5f5f5f5f5f5f
+                ruleName: Daily Limit Breach
+                ruleType: DAILY_LIMIT_BREACH
+                threshold: 500000.00
+                action: BLOCK
+                active: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    AlertId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 9c858901-8a57-4791-81fe-4c455b099bc9
+  schemas:
+    AlertStatus:
+      type: string
+      enum: [OPEN, REVIEWED, CLOSED]
+    RuleAction:
+      type: string
+      enum: [ALERT, BLOCK]
+    RuleType:
+      type: string
+      enum: [VELOCITY, AMOUNT_ANOMALY, ODD_HOURS, DUPLICATE_TRANSACTION, HIGH_RISK_ACCOUNT, DAILY_LIMIT_BREACH]
+    FraudAlertResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        accountNumber:
+          type: string
+        transactionReference:
+          type: string
+        ruleTriggered:
+          type: string
+        riskScore:
+          type: integer
+        action:
+          $ref: '#/components/schemas/RuleAction'
+        status:
+          $ref: '#/components/schemas/AlertStatus'
+        reviewRemarks:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    AlertReviewRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/AlertStatus'
+        remarks:
+          type: string
+    FraudRuleResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ruleName:
+          type: string
+        ruleType:
+          $ref: '#/components/schemas/RuleType'
+        threshold:
+          type: number
+          format: double
+        action:
+          $ref: '#/components/schemas/RuleAction'
+        active:
+          type: boolean
+    FraudRuleUpdateRequest:
+      type: object
+      required: [threshold, action, active]
+      properties:
+        threshold:
+          type: number
+          format: double
+        action:
+          $ref: '#/components/schemas/RuleAction'
+        active:
+          type: boolean
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 400, error: VALIDATION_FAILED, message: 'status must not be null' }
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted (X-USER-ROLE missing or insufficient)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: Alert or rule not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'Fraud alert not found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

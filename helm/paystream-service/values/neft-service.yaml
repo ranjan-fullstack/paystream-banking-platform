@@ -1,0 +1,5 @@
+serviceName: neft-service
+image:
+  repository: REPLACE_WITH_ECR_REGISTRY/neft-service
+  tag: "latest"
+containerPort: 9004

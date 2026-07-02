@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NAMESPACE: paystream-prod
+#
+# Production sizing:
+#   HPA max = 8 replicas × 14 services = 112 pods at full scale.
+#   Each pod: request 500m CPU / 512Mi RAM, limit 1 CPU / 768Mi (values-prod.yaml).
+#   Baseline (3 replicas): 21 CPU / 21Gi RAM.
+#   At HPA max (8 replicas): 56 CPU / 56Gi RAM.
+#
+#   Quota set at ~140% of HPA-max to allow monitoring sidecars, Istio proxies,
+#   and canary pods during Argo Rollouts without hitting the ceiling.
+#
+# Apply: kubectl apply -f k8s/quota/namespace-prod.yaml -n paystream-prod
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: paystream-prod-quota
+  namespace: paystream-prod
+spec:
+  hard:
+    # Compute
+    requests.cpu: "40"
+    requests.memory: 80Gi
+    limits.cpu: "80"
+    limits.memory: 160Gi
+    # Workloads — 112 app pods + monitoring sidecars + Istio proxies + canary pods
+    pods: "150"
+    # Storage
+    persistentvolumeclaims: "30"
+    requests.storage: 500Gi
+    # Object count guards (prevents accidental resource sprawl)
+    services: "50"
+    secrets: "60"
+    configmaps: "60"
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: paystream-prod-limitrange
+  namespace: paystream-prod
+spec:
+  limits:
+    - type: Container
+      # Defaults match the existing deployment.yaml resource spec so containers
+      # without explicit resources still get sensible values.
+      default:
+        cpu: 500m
+        memory: 1Gi
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+      # Hard max per container — a single misconfigured pod cannot monopolise a node.
+      # Set above deployment limits to allow vertical scale-up without editing quota.
+      max:
+        cpu: "4"
+        memory: 8Gi
+      min:
+        cpu: 25m
+        memory: 64Mi
+    # Pod-level cap applies to all containers combined (app + Istio sidecar).
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: 16Gi

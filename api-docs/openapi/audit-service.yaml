@@ -1,0 +1,199 @@
+openapi: 3.0.3
+info:
+  title: PayStream Audit Service
+  version: 1.0.0
+  description: |
+    Read-only service exposing the immutable audit trail recorded across the platform
+    (entity changes, user actions, event types such as NEFT_COMPLETED, FRAUD_ALERT,
+    ACCOUNT_CREATED). All endpoints require a Bearer JWT (enforced by the API Gateway).
+    The "by event type" endpoint additionally requires the caller's role
+    (`X-USER-ROLE`, forwarded by the gateway) to be ADMIN or COMPLIANCE_OFFICER.
+servers:
+  - url: http://localhost:9011
+    description: audit-service (direct)
+  - url: http://localhost:9000
+    description: via API Gateway
+
+tags:
+  - name: Audit
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/audit/entity/{entityId}:
+    get:
+      tags: [Audit]
+      summary: Get the audit trail for a specific entity
+      description: Returns all audit log entries for the entity, ordered by timestamp descending. No pagination.
+      parameters:
+        - name: entityId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+      responses:
+        '200':
+          description: List of audit log entries (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLogResponse'
+              example:
+                - id: 9c858901-8a57-4791-81fe-4c455b099bc9
+                  eventType: ACCOUNT_CREATED
+                  entityType: ACCOUNT
+                  entityId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  performedBy: jdoe
+                  oldValue: null
+                  newValue: '{"status":"ACTIVE"}'
+                  timestamp: '2026-06-28T10:00:00'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/audit/user/{userId}:
+    get:
+      tags: [Audit]
+      summary: Get the audit trail of actions performed by a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: jdoe
+      responses:
+        '200':
+          description: List of audit log entries (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/audit/type/{eventType}:
+    get:
+      tags: [Audit]
+      summary: Get the audit trail for a specific event type
+      description: Requires caller role ADMIN or COMPLIANCE_OFFICER.
+      parameters:
+        - name: eventType
+          in: path
+          required: true
+          schema:
+            type: string
+          example: NEFT_COMPLETED
+      responses:
+        '200':
+          description: List of audit log entries (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller role is not ADMIN or COMPLIANCE_OFFICER
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Only ADMIN or COMPLIANCE_OFFICER may query by event type' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AuditLogResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          example: NEFT_COMPLETED
+        entityType:
+          type: string
+          example: TRANSACTION
+        entityId:
+          type: string
+        performedBy:
+          type: string
+        oldValue:
+          type: string
+          nullable: true
+        newValue:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+    ApiError:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 401, error: UNAUTHORIZED, message: 'Missing or invalid bearer token' }
+    Forbidden:
+      description: Caller role not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 403, error: FORBIDDEN, message: 'Insufficient permissions' }
+    NotFound:
+      description: No audit entries found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 404, error: NOT_FOUND, message: 'No audit entries found' }
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { timestamp: '2026-06-28T10:00:00Z', status: 500, error: INTERNAL_SERVER_ERROR, message: 'Unexpected error' }

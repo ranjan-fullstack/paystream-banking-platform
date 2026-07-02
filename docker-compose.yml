@@ -1,0 +1,401 @@
+services:
+
+  # -------------------------------
+  # 🟢 DATABASES
+  # -------------------------------
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+
+  # -------------------------------
+  # 🔵 REDIS (SENTINEL CLUSTER)
+  # -------------------------------
+  redis-master:
+    image: redis:7
+    container_name: redis-master
+    ports:
+      - "6379:6379"
+
+  redis-replica:
+    image: redis:7
+    container_name: redis-replica
+    ports:
+      - "6380:6379"
+    command: redis-server --replicaof redis-master 6379
+    depends_on:
+      - redis-master
+
+  redis-sentinel:
+    image: redis:7
+    container_name: redis-sentinel
+    ports:
+      - "26379:26379"
+    command: redis-sentinel /etc/redis/sentinel.conf
+    volumes:
+      - ./redis/sentinel.conf:/etc/redis/sentinel.conf
+    depends_on:
+      - redis-master
+      - redis-replica
+
+  # -------------------------------
+  # 🟠 RABBITMQ
+  # -------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  # -------------------------------
+  # 🟡 KAFKA + ZOOKEEPER (FIXED)
+  # -------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
+      # ✅ FIX: supports BOTH local + docker
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  # -------------------------------
+  # 🟡 KAFKA TOPICS INIT (PayStream)
+  # One-shot job: explicitly creates every PayStream domain topic
+  # (+ its .DLT dead-letter counterpart) with a fixed partition count
+  # instead of relying on Kafka's auto-create-topics default, so
+  # partition/replication settings are deterministic in every environment.
+  # -------------------------------
+  kafka-topics-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-topics-init
+    depends_on:
+      - kafka
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command: >
+      "
+      echo 'Waiting for Kafka to be ready...';
+      cub kafka-ready -b kafka:9092 1 30;
+      for topic in
+        payment.neft.initiated
+        payment.neft.completed
+        payment.rtgs.initiated
+        payment.rtgs.settled
+        payment.imps.initiated
+        payment.imps.completed
+        payment.upi.initiated
+        payment.upi.completed
+        payment.debited
+        payment.debit.failed
+        payment.credited
+        payment.credit.failed
+        payment.reversed
+        payment.reversal.failed
+        payment.reconciliation.required
+        fraud.alert
+        account.created
+        customer.kyc.updated
+        notification.send
+      ; do
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic \"$$topic\" --partitions 3 --replication-factor 1;
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic \"$$topic.DLT\" --partitions 3 --replication-factor 1;
+      done;
+      echo 'PayStream Kafka topics created.';
+      "
+
+  # -------------------------------
+  # 🔍 ZIPKIN
+  # -------------------------------
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+
+  # -------------------------------
+  # 📊 PROMETHEUS
+  # -------------------------------
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  # -------------------------------
+  # 📈 GRAFANA
+  # -------------------------------
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+
+  # -------------------------------
+  # 📋 LOKI (central log store)
+  # -------------------------------
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  # -------------------------------
+  # 🧭 DISCOVERY + CONFIG
+  # -------------------------------
+  discovery-server:
+    build: ./discovery-server
+    container_name: discovery-server
+    ports:
+      - "8761:8761"
+
+  config-server:
+    build: ./config-server
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    depends_on:
+      - discovery-server
+    volumes:
+      - ./config-repo:/config-repo
+
+  # -------------------------------
+  # 🔐 AUTH SERVICE
+  # -------------------------------
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    depends_on:
+      - mysql
+      - discovery-server
+      - config-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9005:9005"
+
+  # -------------------------------
+  # 👤 CUSTOMER SERVICE - KYC / customer profile
+  # -------------------------------
+  customer-service:
+    build: ./customer-service
+    container_name: customer-service
+    depends_on:
+      - mysql
+      - discovery-server
+      - config-server
+      - kafka
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9002:9002"
+
+  # -------------------------------
+  # 🏦 ACCOUNT SERVICE - bank accounts, balances, limits
+  # -------------------------------
+  account-service:
+    build: ./account-service
+    container_name: account-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+      - kafka
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9003:9003"
+
+  # -------------------------------
+  # 💸 NEFT SERVICE
+  # -------------------------------
+  neft-service:
+    build: ./neft-service
+    container_name: neft-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+      - kafka
+      - account-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9004:9004"
+
+  # -------------------------------
+  # 💰 RTGS SERVICE
+  # -------------------------------
+  rtgs-service:
+    build: ./rtgs-service
+    container_name: rtgs-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+      - kafka
+      - account-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9012:9012"
+
+  # -------------------------------
+  # ⚡ IMPS SERVICE
+  # -------------------------------
+  imps-service:
+    build: ./imps-service
+    container_name: imps-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+      - kafka
+      - account-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9006:9006"
+
+  # -------------------------------
+  # 📲 UPI SERVICE
+  # -------------------------------
+  upi-service:
+    build: ./upi-service
+    container_name: upi-service
+    depends_on:
+      - postgres
+      - redis-sentinel
+      - discovery-server
+      - config-server
+      - kafka
+      - account-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9007:9007"
+
+  # -------------------------------
+  # 📒 TRANSACTION SERVICE - central ledger
+  # -------------------------------
+  transaction-service:
+    build: ./transaction-service
+    container_name: transaction-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+      - kafka
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9008:9008"
+
+  # -------------------------------
+  # 🚨 FRAUD DETECTION SERVICE
+  # -------------------------------
+  fraud-detection-service:
+    build: ./fraud-detection-service
+    container_name: fraud-detection-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+      - kafka
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9009:9009"
+
+  # -------------------------------
+  # 🔔 NOTIFICATION SERVICE
+  # -------------------------------
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    depends_on:
+      - mysql
+      - discovery-server
+      - config-server
+      - kafka
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9010:9010"
+
+  # -------------------------------
+  # 🧾 AUDIT SERVICE
+  # -------------------------------
+  audit-service:
+    build: ./audit-service
+    container_name: audit-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+      - kafka
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9011:9011"
+
+  # -------------------------------
+  # 🌐 API GATEWAY
+  # -------------------------------
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    depends_on:
+      - discovery-server
+      - config-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9000:9000"
+
+volumes:
+  postgres_data:
+  mysql_data:
