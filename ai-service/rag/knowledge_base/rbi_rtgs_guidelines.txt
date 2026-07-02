@@ -1,0 +1,61 @@
+RBI GUIDELINES: REAL TIME GROSS SETTLEMENT (RTGS)
+
+1. OPERATING HOURS
+RTGS customer transactions are processed on all days of the week (RBI moved
+RTGS to 24x7x365 availability effective December 14, 2020, per Circular
+RBI/2020-21/70). However, many bank-facing implementations, including this
+platform, continue to model RTGS around its historical settlement window for
+straight-through-processing purposes:
+  - Monday to Friday: 07:00 AM to 5:45 PM
+  - Saturday: 07:00 AM to 1:45 PM
+Transactions submitted outside these windows should be queued and settled at
+the next available window, or rejected with an appropriate "outside
+processing hours" reason code, depending on the bank's operating model.
+
+2. TRANSACTION LIMITS
+- Minimum amount: Rs 2,00,000 (Rs 2 lakh) — this is an RBI-mandated floor;
+  RTGS exists specifically for large-value, time-critical transactions.
+- Maximum amount: No RBI-prescribed ceiling. Individual banks may impose
+  their own operational maximum based on risk appetite and channel (branch
+  vs. net/mobile banking).
+- Transactions below Rs 2,00,000 must be rejected and the customer directed
+  to use NEFT, IMPS, or UPI instead.
+
+3. REAL-TIME GROSS SETTLEMENT
+Unlike NEFT (deferred net settlement in batches), RTGS settles each
+transaction individually and immediately upon processing — "gross" meaning
+transaction-by-transaction (not netted) and "real-time" meaning as soon as
+processed, without waiting for a batch window. Once settled at the RBI RTGS
+system, the transaction is final and irrevocable.
+
+4. UTR NUMBER FORMAT
+Every RTGS transaction is assigned a Unique Transaction Reference (UTR)
+number, exactly 22 characters long, typically structured as:
+  <IFSC first 4 chars><Julian date/year><sequence padded to make 22 chars>
+e.g., HDFCR52025010200001234. This UTR is the authoritative reference for
+tracing a transaction across the sending bank, RBI's RTGS system, and the
+receiving bank.
+
+5. RTGS PURPOSE CODES
+RTGS remittances may carry an optional purpose code (used mainly for
+corporate/high-value payments) indicating the nature of the transaction,
+e.g., "SALARY", "SUPPLIER_PAYMENT", "LOAN_DISBURSEMENT", "TAX_PAYMENT",
+"SECURITIES_SETTLEMENT". Purpose codes assist in AML/CFT monitoring and
+regulatory reporting.
+
+6. RTGS REJECTION REASONS
+- Amount below the Rs 2,00,000 regulatory minimum
+- Submission outside the bank's configured RTGS processing window
+- Invalid/incorrect IFSC or beneficiary account number
+- Beneficiary account frozen, closed, or KYC-non-compliant
+- Insufficient funds/limit in the remitter's account
+- Beneficiary bank RTGS-disabled or temporarily unavailable in the RTGS
+  network
+
+7. SETTLEMENT FINALITY
+RTGS settlement is final and irrevocable once the beneficiary bank's account
+is credited at the RBI settlement layer — there is no batch-level netting or
+recall mechanism analogous to NEFT returns. Any correction after settlement
+must be handled as a fresh reverse transaction agreed between the parties,
+not a technical "unwind" of the original RTGS transfer. This makes accurate
+beneficiary details critical before submission.

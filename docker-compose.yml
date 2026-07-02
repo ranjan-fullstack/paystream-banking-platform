@@ -131,6 +131,7 @@ services:
         payment.reversal.failed
         payment.reconciliation.required
         fraud.alert
+        ai.fraud.alert
         account.created
         customer.kyc.updated
         notification.send
@@ -395,6 +396,22 @@ services:
       SPRING_PROFILES_ACTIVE: docker
     ports:
       - "9000:9000"
+
+  # -------------------------------
+  # 🤖 AI SERVICE — Fraud AI, Banking Agent, Financial Advisory
+  # (Python/FastAPI, not a Spring/Eureka client — talks to api-gateway over HTTP)
+  # -------------------------------
+  ai-service:
+    build: ./ai-service
+    container_name: ai-service
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      PAYSTREAM_API_BASE: http://api-gateway:9000
+    depends_on:
+      - postgres
+      - api-gateway
+    ports:
+      - "9013:9013"
 
 volumes:
   postgres_data:

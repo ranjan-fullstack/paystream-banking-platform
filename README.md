@@ -49,10 +49,12 @@ entrypoint; all other services are internal (`lb://` routing + Feign).
 | `fraud-detection-service` | 9009 | Rule-based fraud screening (velocity, large-amount, odd-hour) — builds its own local read-model from Kafka events |
 | `notification-service` | 9010 | Dispatches customer notifications on settlement/fraud events |
 | `audit-service` | 9011 | Append-only audit trail across all domain events |
+| `ai-service` | 9013 | AI layer — LLM fraud analysis, LangChain banking agent, RAG financial advisory (Python/FastAPI, not a Spring/Eureka client) |
 | `common-lib` | — | Shared event DTOs (not deployed) |
 
 > **Known port collision avoided:** `rtgs-service` originally defaulted to
-> 9005 (clashing with `auth-service`) and was moved to **9012**.
+> 9005 (clashing with `auth-service`) and was moved to **9012**. `ai-service`
+> defaults to **9013** for the same reason — 9012 was already taken.
 
 ## RBI/NPCI Business Rules
 
@@ -74,15 +76,58 @@ Topics are explicitly provisioned (not left to Kafka's auto-create default):
 Every domain topic has a matching `.DLT` dead-letter topic.
 
 **Wired today:** `account.created`, `payment.{neft,rtgs,imps,upi}.{completed,settled}`, `fraud.alert`.
-**Reserved (provisioned, not yet produced/consumed):** `payment.*.initiated`, `customer.kyc.updated`, `notification.send` — see `docs/asyncapi.yml` for why.
+**Reserved (provisioned, not yet produced/consumed):** `payment.*.initiated`, `customer.kyc.updated`, `notification.send`, `ai.fraud.alert` — see `docs/asyncapi.yml` for why.
+
+## AI Layer (LLM + RAG + Agentic AI)
+
+`ai-service` (`ai-service/`, port **9013**) is a standalone Python/FastAPI
+microservice — not a Spring Boot module, not a Eureka client — that adds an
+AI layer on top of the existing payment rails over plain HTTP. It talks to
+the platform through `api-gateway`/direct service HTTP calls, not Kafka or
+Feign.
+
+- **Fraud Detection AI** (`POST /api/v1/ai/fraud/analyze`) — an LLM
+  (Ollama + Llama 3.1) assesses a transaction for velocity, amount-anomaly,
+  odd-hour, duplicate, and structuring risk, grounded in RBI fraud
+  guidelines retrieved via RAG, and returns a structured risk score,
+  indicators, and an APPROVE/REVIEW/BLOCK recommendation with a
+  natural-language explanation. Complements (does not replace) the
+  rule-based `fraud-detection-service`.
+- **Banking Agent** (`POST /api/v1/ai/agent/chat`) — a LangChain ReAct agent
+  with tools to look up account balances, transaction history, and payment
+  status, and to query RBI/NPCI guidelines. Never initiates a transfer
+  itself — a detected payment-initiation intent short-circuits to
+  `requires_confirmation: true` with the extracted transfer details instead
+  of calling any tool.
+- **Financial Advisory** (`POST /api/v1/ai/advisory/advice`) — analyzes a
+  customer's transaction history (spend by rail, average amounts, most
+  frequent beneficiaries, failure rate) and RAG-retrieved RBI limits to
+  recommend the appropriate payment rail (UPI/IMPS/RTGS/NEFT) for a given
+  amount and answer free-form questions (e.g., "Why was my RTGS rejected?").
+- **Vector DB:** ChromaDB, local and persistent (`ai-service/chroma_db/`,
+  gitignored) — no external vector service required.
+- **Knowledge Base:** `ai-service/rag/knowledge_base/` — RBI NEFT, RTGS,
+  IMPS, UPI, and fraud-prevention guideline documents, chunked (500 tokens,
+  50 overlap) and indexed into the `rbi_guidelines` ChromaDB collection on
+  startup.
+
+See [`ai-service/`](ai-service/) and
+[`api-docs/openapi/ai-service.yaml`](api-docs/openapi/ai-service.yaml) for
+full setup and API details. Requires a local [Ollama](https://ollama.com)
+instance running `llama3.1` and `nomic-embed-text`.
 
 ## Running Locally
 
 ```bash
 cd backend
-mvn clean install -DskipTests   # builds all 15 modules
-docker compose up -d            # postgres, mysql, kafka, redis, all 14 services
+mvn clean install -DskipTests   # builds all 15 Java/Spring modules
+docker compose up -d            # postgres, mysql, kafka, redis, all 15 services (14 Spring + ai-service)
 ```
+
+`ai-service` additionally requires a local [Ollama](https://ollama.com)
+instance reachable at `http://localhost:11434` (`host.docker.internal:11434`
+from inside Docker) with `llama3.1` and `nomic-embed-text` pulled — see
+[`ai-service/`](ai-service/) for standalone setup instructions.
 
 Postgres/MySQL each get multiple databases on first boot via
 `postgres-init/` and `mysql-init/` (mounted to `/docker-entrypoint-initdb.d`).
