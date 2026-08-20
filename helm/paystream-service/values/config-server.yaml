@@ -4,6 +4,13 @@ image:
   tag: "latest"
 containerPort: 8888
 
+# The chart's default SPRING_PROFILES_ACTIVE=docker (env.springProfile)
+# would make Spring Cloud Config Server fall back to its git-backed
+# environment repository (no URI configured -> startup failure). This
+# service specifically needs "native" to read config-repo/ from disk.
+env:
+  springProfile: native
+
 extraEnv:
   CONFIG_REPO_PATH: /config-repo
   EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
