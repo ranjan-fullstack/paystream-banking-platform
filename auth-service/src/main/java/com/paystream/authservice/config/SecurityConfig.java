@@ -22,10 +22,13 @@ public class SecurityConfig {
 
                         .requestMatchers(
                                 "/auth/v1/**",
+                                "/internal/auth/**",
                                 "/.well-known/jwks.json",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
-                                "/swagger-ui.html"
+                                "/swagger-ui.html",
+                                "/error",
+                                "/actuator/**"
                         ).permitAll()
 
                         .anyRequest().authenticated()
