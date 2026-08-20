@@ -15,3 +15,14 @@ hpa:
 
 pdb:
   minAvailable: 0
+
+# Many JVM-based services share 2 small (t3.medium) nodes in this dev
+# cluster with tight per-pod CPU limits (250m). Cold Spring Boot startup
+# under that contention regularly exceeds the chart's default 45s liveness
+# delay, so kubelet was killing pods before they finished booting. Generous
+# probe timing here, not a fix for an app-level bug.
+probes:
+  initialDelaySeconds: 90
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 6
