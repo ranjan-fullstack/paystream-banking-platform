@@ -1,5 +1,5 @@
 serviceName: upi-service
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/upi-service
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/upi-service
   tag: "latest"
 containerPort: 9007

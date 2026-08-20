@@ -28,8 +28,8 @@ public class FraudRuleSeeder implements CommandLineRunner {
         seed(RuleType.DUPLICATE_TRANSACTION, "Same amount/beneficiary within 5 minutes", new BigDecimal("5"), RuleAction.BLOCK);
         seed(RuleType.HIGH_RISK_ACCOUNT, "Sender or receiver flagged high risk", BigDecimal.ZERO, RuleAction.ALERT);
         seed(RuleType.DAILY_LIMIT_BREACH, "Daily cumulative amount exceeds limit", new BigDecimal("1000000"), RuleAction.BLOCK);
-        seed(RuleType.CTR, "Cash Transaction Report — single transfer Rs 50 lakh or above", new BigDecimal("5000000"), RuleAction.REVIEW);
-        seed(RuleType.STRUCTURING, "Structuring — multiple transfers near CTR threshold within 24 hours", new BigDecimal("5000000"), RuleAction.BLOCK);
+        seed(RuleType.CTR, "Cash Transaction Report — single transfer Rs 10 lakh or above", new BigDecimal("1000000"), RuleAction.REVIEW);
+        seed(RuleType.STRUCTURING, "Structuring — multiple transfers near CTR threshold within 24 hours", new BigDecimal("1000000"), RuleAction.BLOCK);
     }
 
     private void seed(RuleType type, String name, BigDecimal threshold, RuleAction action) {

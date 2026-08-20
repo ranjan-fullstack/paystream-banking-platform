@@ -34,7 +34,7 @@ spec:
       source:
         repoURL: https://github.com/ranjan-fullstack/paystream-banking-platform.git
         targetRevision: HEAD
-        path: backend/helm/paystream-service
+        path: helm/paystream-service
         helm:
           valueFiles:
             - values.yaml

@@ -1,5 +1,5 @@
 serviceName: config-server
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/config-server
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/config-server
   tag: "latest"
 containerPort: 8888

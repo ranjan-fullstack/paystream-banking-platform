@@ -1,5 +1,5 @@
 serviceName: notification-service
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/notification-service
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/notification-service
   tag: "latest"
 containerPort: 9010

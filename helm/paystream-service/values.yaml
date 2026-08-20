@@ -51,6 +51,18 @@ probes:
 env:
   springProfile: docker
 
+serviceAccountName: paystream-secrets-sa
+
+# Secrets are pulled from AWS Secrets Manager at pod startup via the Secrets
+# Store CSI Driver + IRSA (paystream-secrets-sa) — no static AWS keys, no
+# plaintext values in this repo. The CSI volume mount triggers the sync;
+# syncSecret.enabled on the driver mirrors it into the k8sSecretName Secret,
+# which every container consumes via envFrom.
+secrets:
+  enabled: true
+  className: paystream-app-secrets
+  k8sSecretName: paystream-secrets
+
 hpa:
   enabled: true
   minReplicas: 1
