@@ -1,12 +1,26 @@
 namespace: paystream-dev
 replicaCount: 1
 
+# CPU limit deliberately omitted here: with ~14 CPU-hungry JVM cold starts
+# packed onto 2 t3.medium nodes, summed CPU *limits* already exceeded node
+# capacity (113%/111% allocatable). Kubernetes enforces limits via a hard
+# CFS quota per pod, which throttles a JVM's class-loading burst even when
+# the node has idle cycles sitting right next to it -- a well-known
+# JVM-vs-cgroup pathology. Keeping the CPU request (for scheduling
+# fairness) but dropping the limit lets each pod burst into whatever is
+# actually free instead of being capped against a number that was never
+# achievable for everyone simultaneously anyway. Memory limit stays, for
+# OOM protection.
 resources:
   requests:
     cpu: 100m
     memory: 256Mi
   limits:
-    cpu: 250m
+    # Helm deep-merges this map onto values.yaml's defaults key-by-key, so
+    # omitting cpu here would NOT remove the base 250m limit -- it has to be
+    # explicitly raised. 2 full vCPUs is effectively "don't throttle" given
+    # node capacity, while the memory limit still guards against a runaway.
+    cpu: "2000m"
     memory: 384Mi
 
 hpa:
