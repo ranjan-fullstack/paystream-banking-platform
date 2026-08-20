@@ -66,7 +66,15 @@ secrets:
 # Per-service overrides (e.g. SPRING_DATASOURCE_URL pointing at the in-cluster
 # hostname instead of config-repo's localhost default) and extra volumes
 # (e.g. config-server's mounted config-repo ConfigMap).
-extraEnv: {}
+#
+# MANAGEMENT_HEALTH_RABBIT_ENABLED=false: every service exposes "busrefresh"
+# in management.endpoints (Spring Cloud Bus), which auto-configures a
+# RabbitMQ HealthIndicator that folds into the aggregate /actuator/health
+# result. No RabbitMQ is deployed in this cluster, so without this the
+# probe can never observe UP -- every pod would sit in a permanent
+# readiness/liveness failure loop regardless of the app's actual health.
+extraEnv:
+  MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
 extraVolumes: []
 extraVolumeMounts: []
 
