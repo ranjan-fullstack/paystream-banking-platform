@@ -1,6 +1,15 @@
 namespace: paystream-dev
 replicaCount: 1
 
+# Dev images are pushed manually to a mutable :latest tag (no CI pipeline
+# wired up yet -- see Jenkinsfile/ECR notes). IfNotPresent (the chart
+# default, correct for staging/prod where CI pushes an immutable
+# ${BUILD_NUMBER} tag) means kubelet just keeps using whatever :latest it
+# already cached on that node and silently ignores newer pushes. Always
+# is the right policy specifically because this environment reuses one tag.
+image:
+  pullPolicy: Always
+
 # CPU limit deliberately omitted here: with ~14 CPU-hungry JVM cold starts
 # packed onto 2 t3.medium nodes, summed CPU *limits* already exceeded node
 # capacity (113%/111% allocatable). Kubernetes enforces limits via a hard
