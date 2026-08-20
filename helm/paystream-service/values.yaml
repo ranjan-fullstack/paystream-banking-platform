@@ -75,6 +75,13 @@ secrets:
 # readiness/liveness failure loop regardless of the app's actual health.
 extraEnv:
   MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
+  # Separate from the above: Spring Cloud Stream contributes its own
+  # "binders" health indicator (management.health.binders) reporting the
+  # rabbit binder DOWN on connection refused -- confirmed via a direct
+  # /actuator/health?show-details call, where every other component
+  # (Eureka registration, config server, discovery client, disk, liveness)
+  # was already UP.
+  MANAGEMENT_HEALTH_BINDERS_ENABLED: "false"
 extraVolumes: []
 extraVolumeMounts: []
 
