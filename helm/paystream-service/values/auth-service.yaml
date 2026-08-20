@@ -5,7 +5,7 @@ image:
 containerPort: 9005
 
 extraEnv:
-  SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:8888"
+  SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:80"
   EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:80/eureka/
   SPRING_DATASOURCE_URL: "jdbc:mysql://mysql-dev:3306/paystream_auth?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC"
   REDIS_HOST: redis-dev
