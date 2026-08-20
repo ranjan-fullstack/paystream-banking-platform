@@ -7,3 +7,8 @@ ingress:
   enabled: true
   host: api.paystream.internal
   path: /
+
+extraEnv:
+  SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:8888"
+  EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+  SPRING_DATA_REDIS_HOST: redis-dev

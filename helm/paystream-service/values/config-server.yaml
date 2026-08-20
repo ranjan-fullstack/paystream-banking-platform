@@ -3,3 +3,17 @@ image:
   repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/config-server
   tag: "latest"
 containerPort: 8888
+
+extraEnv:
+  CONFIG_REPO_PATH: /config-repo
+  EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+
+extraVolumeMounts:
+  - name: config-repo-vol
+    mountPath: /config-repo
+    readOnly: true
+
+extraVolumes:
+  - name: config-repo-vol
+    configMap:
+      name: paystream-config-repo

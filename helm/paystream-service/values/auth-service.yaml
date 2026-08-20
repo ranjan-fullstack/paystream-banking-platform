@@ -3,3 +3,9 @@ image:
   repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/auth-service
   tag: "latest"
 containerPort: 9005
+
+extraEnv:
+  SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:8888"
+  EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+  SPRING_DATASOURCE_URL: "jdbc:mysql://mysql-dev:3306/paystream_auth?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+  REDIS_HOST: redis-dev

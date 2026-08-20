@@ -1,0 +1,797 @@
+apiVersion: v1
+data:
+  account-service.yml: |
+    server:
+      port: 9003
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_accounts
+        #url: jdbc:postgresql://postgres:5432/paystream_accounts
+        username: ${ACCOUNT_DB_USERNAME:postgres}
+        password: ${ACCOUNT_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+
+      cloud:
+        openfeign:
+          circuitbreaker:
+            enabled: true
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+
+    resilience4j:
+      circuitbreaker:
+        instances:
+          auth-service:
+            sliding-window-size: 10
+            failure-rate-threshold: 50
+            wait-duration-in-open-state: 10s
+            permitted-number-of-calls-in-half-open-state: 3
+      retry:
+        instances:
+          auth-service:
+            max-attempts: 3
+            wait-duration: 500ms
+            retry-exceptions:
+              - feign.FeignException
+  api-gateway.yml: |
+    server:
+      port: 9000
+
+    spring:
+      application:
+        name: api-gateway
+
+      # ------------------------------------------
+      # Redis (for RequestRateLimiter)
+      # ------------------------------------------
+      data:
+        redis:
+          host: localhost
+          # host: redis-sentinel (docker)
+          port: 6379
+
+      cloud:
+        gateway:
+
+          # ------------------------------------------
+          # GLOBAL CORS
+          # ------------------------------------------
+          globalcors:
+            cors-configurations:
+              '[/**]':
+                allowedOriginPatterns: "*"
+                allowedMethods:
+                  - GET
+                  - POST
+                  - PUT
+                  - DELETE
+                  - OPTIONS
+                allowedHeaders: "*"
+                allowCredentials: true
+                maxAge: 3600
+
+          # ------------------------------------------
+          # RATE LIMITING (applied to all routes)
+          # ------------------------------------------
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10    # tokens added per second
+                redis-rate-limiter.burstCapacity: 20    # max tokens in bucket
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
+          discovery:
+            locator:
+              enabled: true
+              lower-case-service-id: true
+
+          routes:
+
+            # ------------------------------------------
+            # AUTH SERVICE (mostly public; /auth/v1/admin/** requires an ADMIN JWT)
+            # ------------------------------------------
+            - id: auth-service
+              uri: lb://auth-service
+              predicates:
+                - Path=/auth/v1/**
+
+            # ------------------------------------------
+            # CUSTOMER SERVICE - KYC / customer profile
+            # ------------------------------------------
+            - id: customer-service
+              uri: lb://customer-service
+              predicates:
+                - Path=/api/v1/customers/**
+
+            # ------------------------------------------
+            # ACCOUNT SERVICE - bank accounts, balances, limits
+            # ------------------------------------------
+            - id: account-service
+              uri: lb://account-service
+              predicates:
+                - Path=/api/v1/accounts/**
+
+            # ------------------------------------------
+            # ACCOUNT SERVICE - branch-manager account operations
+            # ------------------------------------------
+            - id: account-service-branch
+              uri: lb://account-service
+              predicates:
+                - Path=/api/v1/branch/**
+
+            # ------------------------------------------
+            # NEFT SERVICE
+            # ------------------------------------------
+            - id: neft-service
+              uri: lb://neft-service
+              predicates:
+                - Path=/api/v1/neft/**
+
+            # ------------------------------------------
+            # RTGS SERVICE
+            # ------------------------------------------
+            - id: rtgs-service
+              uri: lb://rtgs-service
+              predicates:
+                - Path=/api/v1/rtgs/**
+
+            # ------------------------------------------
+            # IMPS SERVICE
+            # ------------------------------------------
+            - id: imps-service
+              uri: lb://imps-service
+              predicates:
+                - Path=/api/v1/imps/**
+
+            # ------------------------------------------
+            # UPI SERVICE
+            # ------------------------------------------
+            - id: upi-service
+              uri: lb://upi-service
+              predicates:
+                - Path=/api/v1/upi/**
+
+            # ------------------------------------------
+            # TRANSACTION SERVICE - central ledger
+            # ------------------------------------------
+            - id: transaction-service
+              uri: lb://transaction-service
+              predicates:
+                - Path=/api/v1/transactions/**
+
+            # ------------------------------------------
+            # FRAUD DETECTION SERVICE
+            # ------------------------------------------
+            - id: fraud-detection-service
+              uri: lb://fraud-detection-service
+              predicates:
+                - Path=/api/v1/fraud/**
+
+            # ------------------------------------------
+            # NOTIFICATION SERVICE
+            # ------------------------------------------
+            - id: notification-service
+              uri: lb://notification-service
+              predicates:
+                - Path=/api/v1/notifications/**
+
+            # ------------------------------------------
+            # AUDIT SERVICE
+            # ------------------------------------------
+            - id: audit-service
+              uri: lb://audit-service
+              predicates:
+                - Path=/api/v1/audit/**
+
+            # ------------------------------------------
+            # INTERNAL ENDPOINTS (API-key protected by
+            # ApiKeyFilter, not JWT) - service-to-service
+            # calls such as account validate/debit/credit
+            # ------------------------------------------
+            - id: account-service-internal
+              uri: lb://account-service
+              predicates:
+                - Path=/internal/accounts/**
+
+    # ------------------------------------------
+    # EUREKA
+    # ------------------------------------------
+    eureka:
+      client:
+        register-with-eureka: true
+        fetch-registry: true
+        service-url:
+          defaultZone: http://localhost:8761/eureka/
+          #defaultZone: http://discovery-server:8761/eureka/
+
+    # ------------------------------------------
+    # JWT RS256 KEYSTORE (public key for verification)
+    # ------------------------------------------
+    jwt:
+      keystore:
+        path: classpath:paystream-jwt.jks
+        store-password: ${JWT_KEYSTORE_PASSWORD:paystream-keystore-password}
+        key-alias: jwt-signing-key
+
+    # ------------------------------------------
+    # API KEY CONFIG
+    # ------------------------------------------
+    api:
+      key:
+        value: ${API_KEY:paystream-internal-key}
+
+    # ------------------------------------------
+    # ACTUATOR
+    # ------------------------------------------
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+  application.yml: |
+    spring:
+      rabbitmq:
+        host: localhost
+        #host: rabbitmq
+        port: 5672
+        username: guest
+        password: guest
+
+    jwt:
+      secret: ${JWT_SECRET}
+  audit-service.yml: |
+    server:
+      port: 9011
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_audit
+        #url: jdbc:postgresql://postgres:5432/paystream_audit
+        username: ${AUDIT_DB_USERNAME:postgres}
+        password: ${AUDIT_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+        consumer:
+          group-id: audit-service-group
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+  auth-service.yml: |
+    server:
+      port: 9005
+
+    spring:
+      datasource:
+        url: jdbc:mysql://localhost:3306/paystream_auth?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+        #url: jdbc:mysql://mysql:3306/paystream_auth?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+        username: ${AUTH_DB_USERNAME:root}
+        password: ${AUTH_DB_PASSWORD:root}
+        driver-class-name: com.mysql.cj.jdbc.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.MySQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      security:
+        jwt:
+          keystore:
+            path: classpath:paystream-jwt.jks
+            store-password: ${JWT_KEYSTORE_PASSWORD:paystream-keystore-password}
+            key-alias: jwt-signing-key
+            key-password: ${JWT_KEY_PASSWORD:paystream-keystore-password}
+          access-token-expiration: 900000       # 15 minutes
+          refresh-token-expiration: 604800000   # 7 days
+
+      data:
+        redis:
+          host: ${REDIS_HOST:localhost}
+          port: ${REDIS_PORT:6379}
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: refresh,health,info,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+
+    logging:
+      level:
+        org.springframework.security: INFO
+  customer-service.yml: |
+    server:
+      port: 9002
+
+    spring:
+      datasource:
+        url: jdbc:mysql://localhost:3306/paystream_customers?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+        #url: jdbc:mysql://mysql:3306/paystream_customers?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+        username: ${CUSTOMER_DB_USERNAME:root}
+        password: ${CUSTOMER_DB_PASSWORD:root}
+        driver-class-name: com.mysql.cj.jdbc.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.MySQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+    paystream:
+      keystore:
+        path: classpath:paystream-keystore.jceks
+        store-password: ${KEYSTORE_STORE_PASSWORD:paystream-keystore-password}
+        key-alias: pii-encryption-key
+        key-password: ${KEYSTORE_KEY_PASSWORD:paystream-key-password}
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+  fraud-detection-service.yml: |
+    server:
+      port: 9009
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_fraud
+        #url: jdbc:postgresql://postgres:5432/paystream_fraud
+        username: ${FRAUD_DB_USERNAME:postgres}
+        password: ${FRAUD_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+        consumer:
+          group-id: fraud-detection-service-group
+
+    ai-service:
+      base-url: http://localhost:9013
+      #base-url: http://ai-service:9013
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+  imps-service.yml: |
+    server:
+      port: 9006
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_imps
+        #url: jdbc:postgresql://postgres:5432/paystream_imps
+        username: ${IMPS_DB_USERNAME:postgres}
+        password: ${IMPS_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+
+      cloud:
+        openfeign:
+          circuitbreaker:
+            enabled: true
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+
+    resilience4j:
+      circuitbreaker:
+        instances:
+          account-service:
+            sliding-window-size: 10
+            failure-rate-threshold: 50
+            wait-duration-in-open-state: 10s
+            permitted-number-of-calls-in-half-open-state: 3
+      retry:
+        instances:
+          account-service:
+            max-attempts: 3
+            wait-duration: 500ms
+            retry-exceptions:
+              - feign.FeignException
+  neft-service.yml: |
+    server:
+      port: 9004
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_neft
+        #url: jdbc:postgresql://postgres:5432/paystream_neft
+        username: ${NEFT_DB_USERNAME:postgres}
+        password: ${NEFT_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+
+      cloud:
+        openfeign:
+          circuitbreaker:
+            enabled: true
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+
+    resilience4j:
+      circuitbreaker:
+        instances:
+          account-service:
+            sliding-window-size: 10
+            failure-rate-threshold: 50
+            wait-duration-in-open-state: 10s
+            permitted-number-of-calls-in-half-open-state: 3
+      retry:
+        instances:
+          account-service:
+            max-attempts: 3
+            wait-duration: 500ms
+            retry-exceptions:
+              - feign.FeignException
+  notification-service.yml: |
+    server:
+      port: 9010
+
+    spring:
+      datasource:
+        url: jdbc:mysql://localhost:3306/paystream_notifications?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+        #url: jdbc:mysql://mysql:3306/paystream_notifications?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC
+        username: ${NOTIFICATION_DB_USERNAME:root}
+        password: ${NOTIFICATION_DB_PASSWORD:root}
+        driver-class-name: com.mysql.cj.jdbc.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.MySQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+        consumer:
+          group-id: notification-service-group
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+  rtgs-service.yml: |
+    server:
+      port: 9012
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_rtgs
+        #url: jdbc:postgresql://postgres:5432/paystream_rtgs
+        username: ${RTGS_DB_USERNAME:postgres}
+        password: ${RTGS_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+
+      cloud:
+        openfeign:
+          circuitbreaker:
+            enabled: true
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+
+    resilience4j:
+      circuitbreaker:
+        instances:
+          account-service:
+            sliding-window-size: 10
+            failure-rate-threshold: 50
+            wait-duration-in-open-state: 10s
+            permitted-number-of-calls-in-half-open-state: 3
+      retry:
+        instances:
+          account-service:
+            max-attempts: 3
+            wait-duration: 500ms
+            retry-exceptions:
+              - feign.FeignException
+  transaction-service.yml: |
+    server:
+      port: 9008
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_transactions
+        #url: jdbc:postgresql://postgres:5432/paystream_transactions
+        username: ${TRANSACTION_DB_USERNAME:postgres}
+        password: ${TRANSACTION_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+        consumer:
+          group-id: transaction-service-group
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+  upi-service.yml: |
+    server:
+      port: 9007
+
+    spring:
+      datasource:
+        url: jdbc:postgresql://localhost:5433/paystream_upi
+        #url: jdbc:postgresql://postgres:5432/paystream_upi
+        username: ${UPI_DB_USERNAME:postgres}
+        password: ${UPI_DB_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+
+      jpa:
+        database-platform: org.hibernate.dialect.PostgreSQLDialect
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: false
+
+      flyway:
+        baseline-on-migrate: true
+        baseline-version: 1
+
+      data:
+        redis:
+          host: localhost
+          #host: redis-master
+          port: 6379
+
+      kafka:
+        bootstrap-servers: localhost:29092
+        #bootstrap-servers: kafka:9092
+
+      cloud:
+        openfeign:
+          circuitbreaker:
+            enabled: true
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,busrefresh
+      tracing:
+        sampling:
+          probability: 1.0
+      zipkin:
+        tracing:
+          endpoint: http://zipkin:9411/api/v2/spans
+
+    resilience4j:
+      circuitbreaker:
+        instances:
+          account-service:
+            sliding-window-size: 10
+            failure-rate-threshold: 50
+            wait-duration-in-open-state: 10s
+            permitted-number-of-calls-in-half-open-state: 3
+      retry:
+        instances:
+          account-service:
+            max-attempts: 3
+            wait-duration: 500ms
+            retry-exceptions:
+              - feign.FeignException
+kind: ConfigMap
+metadata:
+  name: paystream-config-repo
+  namespace: paystream-dev
