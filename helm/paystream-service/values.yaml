@@ -63,6 +63,13 @@ secrets:
   className: paystream-app-secrets
   k8sSecretName: paystream-secrets
 
+# Per-service overrides (e.g. SPRING_DATASOURCE_URL pointing at the in-cluster
+# hostname instead of config-repo's localhost default) and extra volumes
+# (e.g. config-server's mounted config-repo ConfigMap).
+extraEnv: {}
+extraVolumes: []
+extraVolumeMounts: []
+
 hpa:
   enabled: true
   minReplicas: 1

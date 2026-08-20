@@ -5,22 +5,18 @@ metadata:
   namespace: argocd
 spec:
   generators:
+    # Scoped to the 5 services with images actually built and pushed to ECR.
+    # t3.medium's default VPC-CNI pod density ceiling (17 pods/node) was hit
+    # running all 14 as ImagePullBackOff placeholders alongside ArgoCD, the
+    # secrets-store CSI driver, and the dev datastores. Re-add the rest here
+    # once their images exist (Jenkins CI, or built manually as with these 5).
     - list:
         elements:
           - service: config-server
           - service: discovery-server
           - service: api-gateway
           - service: auth-service
-          - service: customer-service
           - service: account-service
-          - service: neft-service
-          - service: rtgs-service
-          - service: imps-service
-          - service: upi-service
-          - service: transaction-service
-          - service: fraud-detection-service
-          - service: notification-service
-          - service: audit-service
   template:
     metadata:
       name: '{{service}}-dev'
