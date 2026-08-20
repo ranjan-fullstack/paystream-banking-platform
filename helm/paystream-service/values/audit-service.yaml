@@ -1,5 +1,5 @@
 serviceName: audit-service
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/audit-service
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/audit-service
   tag: "latest"
 containerPort: 9011

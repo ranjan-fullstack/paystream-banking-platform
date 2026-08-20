@@ -1,5 +1,5 @@
 serviceName: imps-service
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/imps-service
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/imps-service
   tag: "latest"
 containerPort: 9006

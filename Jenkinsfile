@@ -64,18 +64,16 @@ pipeline {
         stage('Build & Test (full reactor)') {
         // ─────────────────────────────────────────────
             steps {
-                dir('backend') {
-                    sh '''
-                        mvn clean verify \
-                            -Dspring.profiles.active=test \
-                            -Dmaven.test.failure.ignore=false
-                    '''
-                }
+                sh '''
+                    mvn clean verify \
+                        -Dspring.profiles.active=test \
+                        -Dmaven.test.failure.ignore=false
+                '''
             }
             post {
                 always {
                     junit allowEmptyResults: true,
-                          testResults: 'backend/*/target/surefire-reports/*.xml'
+                          testResults: '*/target/surefire-reports/*.xml'
                 }
             }
         }
@@ -87,19 +85,17 @@ pipeline {
         // Fails on CVSS score >= 7 (HIGH).
         // ─────────────────────────────────────────────
             steps {
-                dir('backend') {
-                    sh '''
-                        mvn org.owasp:dependency-check-maven:aggregate \
-                            -DfailBuildOnCVSS=7 \
-                            -Dformat=ALL
-                    '''
-                }
+                sh '''
+                    mvn org.owasp:dependency-check-maven:aggregate \
+                        -DfailBuildOnCVSS=7 \
+                        -Dformat=ALL
+                '''
             }
             post {
                 always {
                     publishHTML(target: [
                         allowMissing: true,
-                        reportDir: 'backend/target',
+                        reportDir: 'target',
                         reportFiles: 'dependency-check-report.html',
                         reportName: 'OWASP Dependency Report'
                     ])
@@ -112,14 +108,12 @@ pipeline {
         // ─────────────────────────────────────────────
             steps {
                 withSonarQubeEnv('SonarQube') {
-                    dir('backend') {
-                        sh """
-                            mvn sonar:sonar \
-                                -Dsonar.projectKey=${SONAR_PROJECT} \
-                                -Dsonar.projectName='PayStream Banking Platform' \
-                                -Dsonar.java.coveragePlugin=jacoco
-                        """
-                    }
+                    sh """
+                        mvn sonar:sonar \
+                            -Dsonar.projectKey=${SONAR_PROJECT} \
+                            -Dsonar.projectName='PayStream Banking Platform' \
+                            -Dsonar.java.coveragePlugin=jacoco
+                    """
                 }
             }
         }
@@ -138,21 +132,19 @@ pipeline {
         stage('Package + Upload to Nexus') {
         // ─────────────────────────────────────────────
             steps {
-                dir('backend') {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'nexus-credentials',
-                        usernameVariable: 'NEXUS_USER',
-                        passwordVariable: 'NEXUS_PASS'
-                    )]) {
-                        sh """
-                            mvn package -DskipTests
+                withCredentials([usernamePassword(
+                    credentialsId: 'nexus-credentials',
+                    usernameVariable: 'NEXUS_USER',
+                    passwordVariable: 'NEXUS_PASS'
+                )]) {
+                    sh """
+                        mvn package -DskipTests
 
-                            mvn deploy \
-                                -DskipTests \
-                                -DaltDeploymentRepository=nexus::default::${NEXUS_URL} \
-                                -s /var/jenkins_home/.m2/settings.xml
-                        """
-                    }
+                        mvn deploy \
+                            -DskipTests \
+                            -DaltDeploymentRepository=nexus::default::${NEXUS_URL} \
+                            -s /var/jenkins_home/.m2/settings.xml
+                    """
                 }
             }
         }
@@ -165,38 +157,36 @@ pipeline {
         // ECR repo (provisioned in infrastructure/ecr.tf).
         // ─────────────────────────────────────────────
             steps {
-                dir('backend') {
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                                      credentialsId: 'aws-credentials']]) {
-                        sh """
-                            aws ecr get-login-password --region ${AWS_REGION} \
-                              | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                                  credentialsId: 'aws-credentials']]) {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} \
+                          | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-                            for SERVICE in \$(echo ${SERVICES} | tr ',' ' '); do
-                                echo "=== Building \$SERVICE ==="
-                                docker build \
-                                  -t \$SERVICE:${IMAGE_TAG} \
-                                  -t \$SERVICE:latest \
-                                  --label git-commit=${env.GIT_COMMIT?.take(7)} \
-                                  --label build-number=${IMAGE_TAG} \
-                                  ./\$SERVICE
+                        for SERVICE in \$(echo ${SERVICES} | tr ',' ' '); do
+                            echo "=== Building \$SERVICE ==="
+                            docker build \
+                              -t \$SERVICE:${IMAGE_TAG} \
+                              -t \$SERVICE:latest \
+                              --label git-commit=${env.GIT_COMMIT?.take(7)} \
+                              --label build-number=${IMAGE_TAG} \
+                              ./\$SERVICE
 
-                                echo "=== Trivy scanning \$SERVICE ==="
-                                trivy image \
-                                    --exit-code 1 \
-                                    --severity CRITICAL \
-                                    --no-progress \
-                                    --format table \
-                                    \$SERVICE:${IMAGE_TAG}
+                            echo "=== Trivy scanning \$SERVICE ==="
+                            trivy image \
+                                --exit-code 1 \
+                                --severity CRITICAL \
+                                --no-progress \
+                                --format table \
+                                \$SERVICE:${IMAGE_TAG}
 
-                                echo "=== Pushing \$SERVICE to ECR ==="
-                                docker tag \$SERVICE:${IMAGE_TAG} ${ECR_REGISTRY}/\$SERVICE:${IMAGE_TAG}
-                                docker tag \$SERVICE:${IMAGE_TAG} ${ECR_REGISTRY}/\$SERVICE:latest
-                                docker push ${ECR_REGISTRY}/\$SERVICE:${IMAGE_TAG}
-                                docker push ${ECR_REGISTRY}/\$SERVICE:latest
-                            done
-                        """
-                    }
+                            echo "=== Pushing \$SERVICE to ECR ==="
+                            docker tag \$SERVICE:${IMAGE_TAG} ${ECR_REGISTRY}/\$SERVICE:${IMAGE_TAG}
+                            docker tag \$SERVICE:${IMAGE_TAG} ${ECR_REGISTRY}/\$SERVICE:latest
+                            docker push ${ECR_REGISTRY}/\$SERVICE:${IMAGE_TAG}
+                            docker push ${ECR_REGISTRY}/\$SERVICE:latest
+                        done
+                    """
                 }
             }
         }
@@ -220,12 +210,12 @@ pipeline {
 
                         for SERVICE in \$(echo ${SERVICES} | tr ',' ' '); do
                             sed -i "s|repository: .*|repository: \\"${ECR_REGISTRY}/\$SERVICE\\"|g" \
-                                backend/helm/paystream-service/values/\$SERVICE.yaml
+                                helm/paystream-service/values/\$SERVICE.yaml
                             sed -i "s|tag: .*|tag: \\"${IMAGE_TAG}\\"|g" \
-                                backend/helm/paystream-service/values/\$SERVICE.yaml
+                                helm/paystream-service/values/\$SERVICE.yaml
                         done
 
-                        git add backend/helm/paystream-service/values/*.yaml
+                        git add helm/paystream-service/values/*.yaml
 
                         git commit -m "ci: update PayStream service images to ${IMAGE_TAG} [skip ci]" || echo "No changes to commit"
 
@@ -263,7 +253,7 @@ pipeline {
                             -e PASSWORD=\${STAGING_PASS} \
                             -e SCENARIO=${params.PERF_SCENARIO} \
                             --out json=k6-staging-results.json \
-                            backend/k6/products-load-test.js
+                            load-testing/products-load-test.js
                     """
                 }
             }

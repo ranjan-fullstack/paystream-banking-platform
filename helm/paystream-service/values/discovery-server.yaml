@@ -1,5 +1,5 @@
 serviceName: discovery-server
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/discovery-server
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/discovery-server
   tag: "latest"
 containerPort: 8761

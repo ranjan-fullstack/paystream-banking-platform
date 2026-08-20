@@ -1,5 +1,5 @@
 serviceName: account-service
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/account-service
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/account-service
   tag: "latest"
 containerPort: 9003

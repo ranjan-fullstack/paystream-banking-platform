@@ -1,6 +1,6 @@
 serviceName: api-gateway
 image:
-  repository: REPLACE_WITH_ECR_REGISTRY/api-gateway
+  repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/api-gateway
   tag: "latest"
 containerPort: 9000
 ingress:

@@ -18,11 +18,17 @@ import java.util.UUID;
 public class AccountController {
 
     private static final String ROLE_CUSTOMER = "CUSTOMER";
+    private static final String ROLE_ADMIN = "ADMIN";
 
     private final AccountService accountService;
 
     @PostMapping
-    public ResponseEntity<AccountResponse> openAccount(@Valid @RequestBody OpenAccountRequest request) {
+    public ResponseEntity<AccountResponse> openAccount(
+            @Valid @RequestBody OpenAccountRequest request,
+            @RequestHeader(value = "X-USER-ROLE", required = false) String role) {
+        if (!ROLE_ADMIN.equals(role)) {
+            throw new AccessDeniedException("Only ADMIN may create accounts");
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(accountService.openAccount(request));
     }
 
@@ -39,8 +45,15 @@ public class AccountController {
     }
 
     @GetMapping("/number/{accountNumber}")
-    public ResponseEntity<AccountResponse> getByAccountNumber(@PathVariable String accountNumber) {
-        return ResponseEntity.ok(accountService.getByAccountNumber(accountNumber));
+    public ResponseEntity<AccountResponse> getByAccountNumber(
+            @PathVariable String accountNumber,
+            @RequestHeader(value = "X-USER-ID", required = false) String userId,
+            @RequestHeader(value = "X-USER-ROLE", required = false) String role) {
+        AccountResponse account = accountService.getByAccountNumber(accountNumber);
+        if (ROLE_CUSTOMER.equals(role)) {
+            verifyOwner(userId, account.getUserId());
+        }
+        return ResponseEntity.ok(account);
     }
 
     @GetMapping("/customer/{customerId}")
@@ -53,6 +66,21 @@ public class AccountController {
             verifyOwner(userId, accounts.get(0).getUserId());
         }
         return ResponseEntity.ok(accounts);
+    }
+
+    // Customers authenticate with auth-service's numeric User.id (carried as the
+    // JWT's userId claim) — they have no notion of the CIF-formatted customerId
+    // that customer-service assigns, so the customer-facing frontend looks accounts
+    // up this way rather than via /customer/{customerId}.
+    @GetMapping("/user/{userId}")
+    public ResponseEntity<List<AccountResponse>> getByUserId(
+            @PathVariable Long userId,
+            @RequestHeader(value = "X-USER-ID", required = false) String requestingUserId,
+            @RequestHeader(value = "X-USER-ROLE", required = false) String role) {
+        if (ROLE_CUSTOMER.equals(role) && !userId.toString().equals(requestingUserId)) {
+            throw new AccessDeniedException("Access denied: accounts do not belong to the requesting user");
+        }
+        return ResponseEntity.ok(accountService.getByUserId(userId));
     }
 
     @PutMapping("/{accountId}/status")
