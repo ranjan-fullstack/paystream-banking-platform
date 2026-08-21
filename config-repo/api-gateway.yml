@@ -53,7 +53,7 @@ spring:
       routes:
 
         # ------------------------------------------
-        # AUTH SERVICE (PUBLIC - no JWT required)
+        # AUTH SERVICE (mostly public; /auth/v1/admin/** requires an ADMIN JWT)
         # ------------------------------------------
         - id: auth-service
           uri: lb://auth-service
@@ -75,6 +75,14 @@ spring:
           uri: lb://account-service
           predicates:
             - Path=/api/v1/accounts/**
+
+        # ------------------------------------------
+        # ACCOUNT SERVICE - branch-manager account operations
+        # ------------------------------------------
+        - id: account-service-branch
+          uri: lb://account-service
+          predicates:
+            - Path=/api/v1/branch/**
 
         # ------------------------------------------
         # NEFT SERVICE
@@ -184,7 +192,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,refresh,busrefresh
+        include: health,info,refresh,busrefresh,prometheus
   tracing:
     sampling:
       probability: 1.0
