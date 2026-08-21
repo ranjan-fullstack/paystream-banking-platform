@@ -7,6 +7,15 @@ ingress:
   enabled: true
   host: api.paystream.internal
   path: /
+  # TLS cert is self-signed (dev only, no owned domain to get an ACM
+  # public cert issued against) -- imported into ACM so the ALB can
+  # terminate TLS with it like any other ACM cert. Merges with the
+  # ingress.class/scheme/target-type annotations already in values.yaml.
+  annotations:
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-south-1:198758256599:certificate/282e42b5-87bf-4c76-8c64-4eddf8460459"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
 
 extraEnv:
   SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:80"
