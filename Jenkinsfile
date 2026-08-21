@@ -30,6 +30,12 @@ spec:
       resources:
         requests: {cpu: 200m, memory: 512Mi}
         limits: {memory: 1Gi}
+    - name: awscli
+      image: amazon/aws-cli:2.17.62
+      command: ['cat']
+      tty: true
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
     - name: trivy
       image: aquasec/trivy:0.55.2
       command: ['cat']
@@ -81,7 +87,8 @@ spec:
             steps {
                 checkout scm
                 script {
-                    env.GIT_SHA = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+                    env.GIT_FULL_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    env.GIT_SHA = env.GIT_FULL_SHA.take(8)
                 }
                 echo "Building ${SERVICE} @ ${env.GIT_SHA}"
             }
@@ -210,12 +217,29 @@ spec:
         // ─────────────────────────────────────────────
         // Kaniko, not a Docker daemon -- no privileged container needed
         // to build inside a Kubernetes pod. Tagged with the git SHA,
-        // never :latest.
+        // never :latest. ECR auth uses the jenkins-agent IRSA role (no
+        // static AWS keys anywhere) to mint a docker config.json in the
+        // shared workspace, which the kaniko container then reads --
+        // the two containers share the pod's workspace volume but not
+        // each other's home directories, so this has to be written to
+        // the workspace explicitly rather than relying on kaniko's
+        // default /kaniko/.docker path.
         // ─────────────────────────────────────────────
             steps {
+                container('awscli') {
+                    sh """
+                        mkdir -p .docker
+                        aws ecr get-login-password --region ${AWS_REGION} > /tmp/ecrpw
+                        AUTH=\$(printf 'AWS:%s' "\$(cat /tmp/ecrpw)" | base64 -w0)
+                        cat > .docker/config.json <<JSON
+{"auths":{"${ECR_REGISTRY}":{"auth":"\$AUTH"}}}
+JSON
+                        rm -f /tmp/ecrpw
+                    """
+                }
                 container('kaniko') {
                     sh """
-                        /kaniko/executor \
+                        DOCKER_CONFIG=`pwd`/.docker /kaniko/executor \
                           --context=`pwd`/${SERVICE} \
                           --dockerfile=`pwd`/${SERVICE}/Dockerfile \
                           --destination=${ECR_REGISTRY}/${SERVICE}:${env.GIT_SHA} \
@@ -270,6 +294,13 @@ spec:
                             git push https://\${GIT_USER}:\${GIT_TOKEN}@github.com/ranjan-fullstack/paystream-banking-platform.git HEAD:main
                         """
                     }
+                    script {
+                        // The commit ArgoCD needs to sync to is this new
+                        // bump commit, not the one checked out at the start
+                        // of the build -- capture it here rather than
+                        // trying to run git inside the kubectl container.
+                        env.DEPLOY_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    }
                 }
             }
         }
@@ -284,7 +315,7 @@ spec:
                           HEALTH=\$(kubectl get application ${SERVICE}-dev -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
                           SYNCED=\$(kubectl get application ${SERVICE}-dev -n argocd -o jsonpath='{.status.sync.revision}' 2>/dev/null)
                           echo "health=\$HEALTH revision=\$SYNCED"
-                          if [ "\$HEALTH" = "Healthy" ] && echo "\$SYNCED" | grep -q "\$(git rev-parse HEAD)"; then
+                          if [ "\$HEALTH" = "Healthy" ] && echo "\$SYNCED" | grep -q "${env.DEPLOY_SHA}"; then
                             echo "ArgoCD synced and Healthy at the new commit"
                             exit 0
                           fi
