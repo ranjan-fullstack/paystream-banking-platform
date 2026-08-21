@@ -8,3 +8,12 @@ spring:
 
 jwt:
   secret: ${JWT_SECRET}
+
+eureka:
+  instance:
+    # Default self-registration uses the pod's own hostname, which isn't
+    # DNS-resolvable in Kubernetes -- every Eureka-routed inter-service
+    # call (Feign, Spring Cloud Gateway's lb://) fails with
+    # UnknownHostException once it tries to actually connect to that
+    # hostname. Registering the pod IP directly fixes it cluster-wide.
+    prefer-ip-address: true
