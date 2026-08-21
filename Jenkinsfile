@@ -135,7 +135,7 @@ spec:
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
-                    sh 'mvn -pl common-lib,account-service -am test jacoco:report'
+                    sh 'mvn -pl common-lib,account-service -am test org.jacoco:jacoco-maven-plugin:report'
                 }
             }
             post {
