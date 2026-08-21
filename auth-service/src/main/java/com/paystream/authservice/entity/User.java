@@ -27,4 +27,19 @@ public class User {
 
     @Enumerated(EnumType.STRING)
     private Role role;
+
+    // Assigned branch for BRANCH_MANAGER / TELLER staff — null for CUSTOMER/ADMIN.
+    private String branchCode;
+
+    // Staff identifier for BRANCH_MANAGER / TELLER — null for CUSTOMER/ADMIN.
+    private String employeeId;
+
+    @Builder.Default
+    private boolean isFirstLogin = false;
+
+    // Which branch created this CUSTOMER, if any.
+    private String createdByBranch;
+
+    // Which branch manager (employeeId) created this CUSTOMER, if any.
+    private String createdByManager;
 }

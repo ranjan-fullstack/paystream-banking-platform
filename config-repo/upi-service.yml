@@ -3,10 +3,10 @@
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/paystream_upi
+    url: jdbc:postgresql://localhost:5433/paystream_upi
     #url: jdbc:postgresql://postgres:5432/paystream_upi
-    username: ${UPI_DB_USERNAME}
-    password: ${UPI_DB_PASSWORD}
+    username: ${UPI_DB_USERNAME:postgres}
+    password: ${UPI_DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -18,6 +18,10 @@ spring:
       hibernate:
         format_sql: false
 
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 1
+
   data:
     redis:
       host: localhost
@@ -25,8 +29,13 @@ spring:
       port: 6379
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:29092
     #bootstrap-servers: kafka:9092
+
+  cloud:
+    openfeign:
+      circuitbreaker:
+        enabled: true
 
 management:
   endpoints:
@@ -39,12 +48,6 @@ management:
   zipkin:
     tracing:
       endpoint: http://zipkin:9411/api/v2/spans
-
-spring:
-  cloud:
-    openfeign:
-      circuitbreaker:
-        enabled: true
 
 resilience4j:
   circuitbreaker:

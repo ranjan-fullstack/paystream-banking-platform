@@ -1,0 +1,56 @@
+apiVersion: v1
+data:
+  paystream-overview.json: |
+    {
+      "title": "PayStream - Service Overview",
+      "uid": "paystream-overview",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-30m", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Request rate (req/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(http_server_requests_seconds_count{job=~\"account-service|auth-service|api-gateway|config-server|discovery-server|customer-service\"}[5m])) by (job)",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Average latency (s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(http_server_requests_seconds_sum{job=~\"account-service|auth-service|api-gateway|config-server|discovery-server|customer-service\"}[5m])) by (job) / sum(rate(http_server_requests_seconds_count{job=~\"account-service|auth-service|api-gateway|config-server|discovery-server|customer-service\"}[5m])) by (job)",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Error rate (5xx %)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "100 * sum(rate(http_server_requests_seconds_count{job=~\"account-service|auth-service|api-gateway|config-server|discovery-server|customer-service\", outcome=\"SERVER_ERROR\"}[5m])) by (job) / sum(rate(http_server_requests_seconds_count{job=~\"account-service|auth-service|api-gateway|config-server|discovery-server|customer-service\"}[5m])) by (job)",
+              "legendFormat": "{{job}}"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "percent" } }
+        }
+      ]
+    }
+kind: ConfigMap
+metadata:
+  labels:
+    grafana_dashboard: "1"
+  name: paystream-grafana-dashboard
+  namespace: monitoring

@@ -3,6 +3,7 @@ import logging
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from config.settings import settings
+from agents.tools.auth_context import auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ def get_transaction_history(account_number: str, limit: int = 10) -> str:
     """Get recent transaction history for an account."""
     url = f"{settings.PAYSTREAM_API_BASE}/api/v1/transactions/account/{account_number}"
     try:
-        response = httpx.get(url, params={"limit": limit}, timeout=10.0)
+        response = httpx.get(url, params={"limit": limit}, headers=auth_headers(), timeout=10.0)
         response.raise_for_status()
         return str(response.json())
     except httpx.HTTPError as e:

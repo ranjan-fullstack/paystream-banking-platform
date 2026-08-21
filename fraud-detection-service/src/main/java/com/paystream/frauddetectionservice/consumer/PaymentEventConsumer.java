@@ -3,6 +3,8 @@ package com.paystream.frauddetectionservice.consumer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.commonlib.event.FraudAlertEvent;
 import com.paystream.commonlib.event.TransactionCompletedEvent;
+import com.paystream.frauddetectionservice.client.AiFraudClient;
+import com.paystream.frauddetectionservice.client.dto.AiFraudResponse;
 import com.paystream.frauddetectionservice.entity.FraudAlert;
 import com.paystream.frauddetectionservice.entity.TransactionLog;
 import com.paystream.frauddetectionservice.enums.AlertStatus;
@@ -22,9 +24,12 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
- * Builds the local transaction read-model and runs the fraud rule engine
- * against every completed payment. See FraudRuleEngineImpl for the
- * post-completion vs. pre-settlement blocking trade-off this implies.
+ * Builds the local transaction read-model and runs fraud detection against
+ * every completed payment: the existing rule engine, plus ai-service's LLM+RAG
+ * fraud analysis (previously implemented but never called by anything in the
+ * platform). Either detector can independently trigger an alert; when both
+ * fire, the alert reflects whichever is more severe. See FraudRuleEngineImpl
+ * for the post-completion vs. pre-settlement blocking trade-off this implies.
  */
 @Component
 @RequiredArgsConstructor
@@ -36,6 +41,7 @@ public class PaymentEventConsumer {
     private final TransactionLogRepository transactionLogRepository;
     private final FraudAlertRepository fraudAlertRepository;
     private final FraudRuleEngine fraudRuleEngine;
+    private final AiFraudClient aiFraudClient;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
 
@@ -62,29 +68,58 @@ public class PaymentEventConsumer {
             txnLog.setOccurredAt(LocalDateTime.now());
             final TransactionLog savedLog = transactionLogRepository.save(txnLog);
 
-            Optional<FraudRuleEngine.RuleEvaluationResult> result = fraudRuleEngine.evaluate(savedLog);
-            result.ifPresent(r -> raiseAlert(savedLog, r));
+            Optional<FraudRuleEngine.RuleEvaluationResult> ruleResult = fraudRuleEngine.evaluate(savedLog);
+            AiFraudResponse aiResult = aiFraudClient.analyze(savedLog);
+            boolean aiFlagged = isElevated(aiResult);
+
+            if (ruleResult.isPresent() || aiFlagged) {
+                raiseAlert(savedLog, ruleResult.orElse(null), aiFlagged ? aiResult : null);
+            }
         } catch (Exception e) {
             log.error("Failed to process payment event for fraud check: {}", payload, e);
         }
     }
 
-    private void raiseAlert(TransactionLog txn, FraudRuleEngine.RuleEvaluationResult result) {
+    private boolean isElevated(AiFraudResponse ai) {
+        if (ai == null) {
+            return false;
+        }
+        return "BLOCK".equalsIgnoreCase(ai.getRecommendation())
+                || "REVIEW".equalsIgnoreCase(ai.getRecommendation())
+                || "HIGH".equalsIgnoreCase(ai.getRiskLevel())
+                || "CRITICAL".equalsIgnoreCase(ai.getRiskLevel());
+    }
+
+    private void raiseAlert(TransactionLog txn, FraudRuleEngine.RuleEvaluationResult ruleResult, AiFraudResponse aiResult) {
+        int ruleScore = ruleResult != null ? ruleResult.riskScore() : 0;
+        int aiScore = (aiResult != null && aiResult.getRiskScore() != null) ? Math.round(aiResult.getRiskScore()) : 0;
+        RuleAction ruleAction = ruleResult != null ? RuleAction.valueOf(ruleResult.action()) : null;
+        RuleAction aiAction = aiResult != null ? mapRecommendationToAction(aiResult.getRecommendation()) : null;
+
         FraudAlert alert = new FraudAlert();
         alert.setAccountNumber(txn.getAccountNumber());
         alert.setTransactionReference(txn.getPaymentReferenceNumber());
-        alert.setRuleTriggered(result.ruleTriggered());
-        alert.setRiskScore(result.riskScore());
-        alert.setAction(RuleAction.valueOf(result.action()));
+        alert.setRuleTriggered(ruleResult != null ? ruleResult.ruleTriggered() : "AI_FRAUD_DETECTION");
+        alert.setRiskScore(Math.max(ruleScore, aiScore));
+        alert.setAction(higherSeverity(ruleAction, aiAction));
         alert.setStatus(AlertStatus.OPEN);
+
+        if (aiResult != null) {
+            alert.setAiExplanation(aiResult.getExplanation());
+            alert.setAiRiskScore(aiResult.getRiskScore());
+            alert.setDetectionMethod(ruleResult != null ? "RULE_ENGINE + AI" : "AI");
+        } else {
+            alert.setDetectionMethod("RULE_ENGINE");
+        }
+
         fraudAlertRepository.save(alert);
 
         FraudAlertEvent event = FraudAlertEvent.builder()
                 .accountNumber(txn.getAccountNumber())
                 .transactionReference(txn.getPaymentReferenceNumber())
-                .ruleTriggered(result.ruleTriggered())
-                .riskScore(result.riskScore())
-                .action(result.action())
+                .ruleTriggered(alert.getRuleTriggered())
+                .riskScore(alert.getRiskScore())
+                .action(alert.getAction().name())
                 .createdAt(Instant.now())
                 .build();
         try {
@@ -92,5 +127,34 @@ public class PaymentEventConsumer {
         } catch (Exception e) {
             log.error("Failed to publish FraudAlertEvent for {}", txn.getPaymentReferenceNumber(), e);
         }
+    }
+
+    private RuleAction mapRecommendationToAction(String recommendation) {
+        if (recommendation == null) {
+            return RuleAction.ALERT;
+        }
+        return switch (recommendation.toUpperCase()) {
+            case "BLOCK" -> RuleAction.BLOCK;
+            case "REVIEW" -> RuleAction.REVIEW;
+            default -> RuleAction.ALERT;
+        };
+    }
+
+    private RuleAction higherSeverity(RuleAction a, RuleAction b) {
+        if (a == null) {
+            return b != null ? b : RuleAction.ALERT;
+        }
+        if (b == null) {
+            return a;
+        }
+        return severityRank(a) >= severityRank(b) ? a : b;
+    }
+
+    private int severityRank(RuleAction action) {
+        return switch (action) {
+            case BLOCK -> 2;
+            case REVIEW -> 1;
+            case ALERT -> 0;
+        };
     }
 }

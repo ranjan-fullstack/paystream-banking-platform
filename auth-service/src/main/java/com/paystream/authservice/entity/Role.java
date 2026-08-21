@@ -4,6 +4,7 @@ public enum Role {
     CUSTOMER,
     ADMIN,
     TELLER,
+    BRANCH_MANAGER,
     COMPLIANCE_OFFICER,
     FRAUD_ANALYST
 }

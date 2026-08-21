@@ -1,0 +1,5 @@
+ALTER TABLE users ADD COLUMN branch_code VARCHAR(20);
+ALTER TABLE users ADD COLUMN employee_id VARCHAR(20);
+ALTER TABLE users ADD COLUMN is_first_login BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN created_by_branch VARCHAR(20);
+ALTER TABLE users ADD COLUMN created_by_manager VARCHAR(50);

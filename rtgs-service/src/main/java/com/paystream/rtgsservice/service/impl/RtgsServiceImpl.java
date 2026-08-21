@@ -4,12 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.commonlib.event.PaymentInitiatedEvent;
 import com.paystream.rtgsservice.client.AccountClient;
 import com.paystream.rtgsservice.client.dto.AccountValidationResponse;
+import com.paystream.rtgsservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.rtgsservice.dto.RtgsTransactionResponse;
 import com.paystream.rtgsservice.dto.RtgsTransferRequest;
 import com.paystream.rtgsservice.entity.OutboxEvent;
 import com.paystream.rtgsservice.entity.RtgsTransaction;
 import com.paystream.rtgsservice.enums.RtgsStatus;
+import com.paystream.rtgsservice.exception.DailyLimitExceededException;
 import com.paystream.rtgsservice.exception.InvalidAccountException;
+import com.paystream.rtgsservice.exception.PaymentRailNotEnabledException;
+import com.paystream.rtgsservice.exception.PerTransactionLimitExceededException;
 import com.paystream.rtgsservice.exception.RtgsAlreadySettledException;
 import com.paystream.rtgsservice.exception.RtgsTransactionNotFoundException;
 import com.paystream.rtgsservice.exception.RtgsWindowClosedException;
@@ -22,6 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -47,6 +52,8 @@ public class RtgsServiceImpl implements RtgsService {
     @Override
     @Transactional
     public RtgsTransactionResponse initiateTransfer(RtgsTransferRequest request) {
+        validatePaymentRail(request.getSenderAccountNumber(), request.getAmount());
+
         if (!windowValidator.isWithinWindow(LocalDateTime.now())) {
             throw new RtgsWindowClosedException();
         }
@@ -151,5 +158,22 @@ public class RtgsServiceImpl implements RtgsService {
                 .rbiUtrNumber(txn.getRbiUtrNumber())
                 .failureReason(txn.getFailureReason())
                 .build();
+    }
+
+    private void validatePaymentRail(String senderAccountNumber, BigDecimal amount) {
+        PaymentRailConfigResponse config = accountClient.getPaymentConfig(senderAccountNumber, "RTGS");
+
+        if (!config.isEnabled()) {
+            throw new PaymentRailNotEnabledException(
+                    "RTGS transfers are not enabled for account " + senderAccountNumber + ". Please contact your branch.");
+        }
+        if (amount.compareTo(config.getPerTransactionLimit()) > 0) {
+            throw new PerTransactionLimitExceededException(
+                    "Amount ₹" + amount + " exceeds RTGS per-transaction limit of ₹" + config.getPerTransactionLimit());
+        }
+        if (amount.compareTo(config.getRemainingToday()) > 0) {
+            throw new DailyLimitExceededException(
+                    "RTGS daily limit reached. Remaining today: ₹" + config.getRemainingToday() + ". Resets at midnight.");
+        }
     }
 }

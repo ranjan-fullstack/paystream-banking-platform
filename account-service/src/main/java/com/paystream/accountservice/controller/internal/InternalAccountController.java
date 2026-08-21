@@ -2,6 +2,8 @@ package com.paystream.accountservice.controller.internal;
 
 import com.paystream.accountservice.dto.AccountValidationResponse;
 import com.paystream.accountservice.dto.AmountRequest;
+import com.paystream.accountservice.dto.PaymentRailConfigResponse;
+import com.paystream.accountservice.enums.PaymentMode;
 import com.paystream.accountservice.service.AccountService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -48,5 +50,12 @@ public class InternalAccountController {
     public ResponseEntity<Void> reverseDebit(@PathVariable String accountNumber, @Valid @RequestBody AmountRequest request) {
         accountService.reverseDebit(accountNumber, request);
         return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{accountNumber}/payment-config/{paymentMode}")
+    public ResponseEntity<PaymentRailConfigResponse> getPaymentConfig(
+            @PathVariable("accountNumber") String accountNumber,
+            @PathVariable("paymentMode") PaymentMode paymentMode) {
+        return ResponseEntity.ok(accountService.getPaymentRailConfig(accountNumber, paymentMode));
     }
 }

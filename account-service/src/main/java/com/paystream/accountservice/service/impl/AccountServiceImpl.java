@@ -2,6 +2,7 @@ package com.paystream.accountservice.service.impl;
 
 import com.paystream.accountservice.dto.*;
 import com.paystream.accountservice.entity.AccountLimit;
+import com.paystream.accountservice.entity.AccountPaymentConfig;
 import com.paystream.accountservice.entity.BankAccount;
 import com.paystream.accountservice.enums.AccountStatus;
 import com.paystream.accountservice.enums.PaymentMode;
@@ -10,6 +11,7 @@ import com.paystream.accountservice.exception.AccountNotFoundException;
 import com.paystream.accountservice.exception.DailyLimitExceededException;
 import com.paystream.accountservice.exception.InsufficientBalanceException;
 import com.paystream.accountservice.repository.AccountLimitRepository;
+import com.paystream.accountservice.repository.AccountPaymentConfigRepository;
 import com.paystream.accountservice.repository.BankAccountRepository;
 import com.paystream.accountservice.service.AccountService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,6 +41,7 @@ public class AccountServiceImpl implements AccountService {
 
     private final BankAccountRepository bankAccountRepository;
     private final AccountLimitRepository accountLimitRepository;
+    private final AccountPaymentConfigRepository accountPaymentConfigRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
 
@@ -89,6 +92,13 @@ public class AccountServiceImpl implements AccountService {
     @Override
     public List<AccountResponse> getByCustomerId(String customerId) {
         return bankAccountRepository.findByCustomerId(customerId).stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<AccountResponse> getByUserId(Long userId) {
+        return bankAccountRepository.findByUserId(userId).stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }
@@ -309,6 +319,191 @@ public class AccountServiceImpl implements AccountService {
                 .dailyLimit(limit.getDailyLimit())
                 .perTransactionLimit(limit.getPerTransactionLimit())
                 .usedTodayAmount(limit.getUsedTodayAmount())
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public AccountResponse openAccountByBranch(OpenAccountByBranchRequest request) {
+        BankAccount account = new BankAccount();
+        account.setAccountNumber(generateUniqueAccountNumber());
+        // branchCode already carries the "PAYS" prefix (e.g. "PAYS0001") — do not
+        // prepend it again, or the IFSC comes out as "PAYSPAYS0001001".
+        account.setIfscCode(request.getBranchCode() + "001");
+        account.setAccountType(request.getAccountType());
+        account.setUserId(request.getUserId());
+        // customerId is NOT NULL/immutable on BankAccount, but the branch-open flow
+        // only has a userId, not a real CIF from customer-service — synthesize a
+        // stable, obviously-derived placeholder rather than leaving it blank or
+        // accepting arbitrary free text (which is how this column ended up holding
+        // a username in production).
+        account.setCustomerId("USR" + request.getUserId());
+        account.setBranchCode(request.getBranchCode());
+        account.setBalance(request.getInitialDeposit());
+        account.setAvailableBalance(request.getInitialDeposit());
+        account.setStatus(AccountStatus.ACTIVE);
+        account = bankAccountRepository.save(account);
+
+        seedDefaultLimits(account);
+
+        AccountPaymentConfig config = new AccountPaymentConfig();
+        config.setAccountId(account.getId());
+        accountPaymentConfigRepository.save(config);
+
+        publishAccountCreated(account);
+
+        return toResponse(account);
+    }
+
+    @Override
+    @Transactional
+    public PaymentConfigResponse updatePaymentConfig(UUID accountId, PaymentConfigUpdateRequest request) {
+        BankAccount account = findByIdOrThrow(accountId);
+        AccountPaymentConfig config = accountPaymentConfigRepository.findByAccountId(account.getId())
+                .orElseGet(() -> {
+                    AccountPaymentConfig newConfig = new AccountPaymentConfig();
+                    newConfig.setAccountId(account.getId());
+                    return newConfig;
+                });
+
+        config.setNeftEnabled(request.getNeftEnabled());
+        config.setRtgsEnabled(request.getRtgsEnabled());
+        config.setImpsEnabled(request.getImpsEnabled());
+        config.setUpiEnabled(request.getUpiEnabled());
+        if (request.getNeftDailyLimit() != null) config.setNeftDailyLimit(request.getNeftDailyLimit());
+        if (request.getNeftPerTransactionLimit() != null) config.setNeftPerTransactionLimit(request.getNeftPerTransactionLimit());
+        if (request.getRtgsDailyLimit() != null) config.setRtgsDailyLimit(request.getRtgsDailyLimit());
+        if (request.getRtgsPerTransactionLimit() != null) config.setRtgsPerTransactionLimit(request.getRtgsPerTransactionLimit());
+        if (request.getImpsDailyLimit() != null) config.setImpsDailyLimit(request.getImpsDailyLimit());
+        if (request.getImpsPerTransactionLimit() != null) config.setImpsPerTransactionLimit(request.getImpsPerTransactionLimit());
+        if (request.getUpiDailyLimit() != null) config.setUpiDailyLimit(request.getUpiDailyLimit());
+        if (request.getUpiPerTransactionLimit() != null) config.setUpiPerTransactionLimit(request.getUpiPerTransactionLimit());
+
+        LocalDateTime now = LocalDateTime.now();
+        if (config.getEnabledAt() == null) {
+            config.setEnabledBy(request.getUpdatedBy());
+            config.setEnabledAt(now);
+        }
+        config.setLastUpdatedBy(request.getUpdatedBy());
+        config.setLastUpdatedAt(now);
+
+        return toConfigResponse(accountPaymentConfigRepository.save(config));
+    }
+
+    @Override
+    public List<AccountResponse> getAccountsByBranch(String branchCode) {
+        return bankAccountRepository.findByBranchCode(branchCode).stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public PaymentConfigResponse getPaymentConfig(UUID accountId) {
+        BankAccount account = findByIdOrThrow(accountId);
+        return accountPaymentConfigRepository.findByAccountId(account.getId())
+                .map(this::toConfigResponse)
+                .orElseGet(() -> defaultConfigResponse(account.getId()));
+    }
+
+    @Override
+    @Transactional
+    public AccountResponse freezeAccount(UUID accountId) {
+        BankAccount account = findByIdOrThrow(accountId);
+        account.setStatus(AccountStatus.FROZEN);
+        return toResponse(bankAccountRepository.save(account));
+    }
+
+    @Override
+    @Transactional
+    public AccountResponse unfreezeAccount(UUID accountId) {
+        BankAccount account = findByIdOrThrow(accountId);
+        account.setStatus(AccountStatus.ACTIVE);
+        return toResponse(bankAccountRepository.save(account));
+    }
+
+    private PaymentConfigResponse toConfigResponse(AccountPaymentConfig config) {
+        return PaymentConfigResponse.builder()
+                .accountId(config.getAccountId())
+                .neftEnabled(config.isNeftEnabled())
+                .neftDailyLimit(config.getNeftDailyLimit())
+                .neftPerTransactionLimit(config.getNeftPerTransactionLimit())
+                .rtgsEnabled(config.isRtgsEnabled())
+                .rtgsDailyLimit(config.getRtgsDailyLimit())
+                .rtgsPerTransactionLimit(config.getRtgsPerTransactionLimit())
+                .impsEnabled(config.isImpsEnabled())
+                .impsDailyLimit(config.getImpsDailyLimit())
+                .impsPerTransactionLimit(config.getImpsPerTransactionLimit())
+                .upiEnabled(config.isUpiEnabled())
+                .upiDailyLimit(config.getUpiDailyLimit())
+                .upiPerTransactionLimit(config.getUpiPerTransactionLimit())
+                .enabledBy(config.getEnabledBy())
+                .enabledAt(config.getEnabledAt())
+                .lastUpdatedBy(config.getLastUpdatedBy())
+                .lastUpdatedAt(config.getLastUpdatedAt())
+                .build();
+    }
+
+    private PaymentConfigResponse defaultConfigResponse(UUID accountId) {
+        AccountPaymentConfig defaults = new AccountPaymentConfig();
+        defaults.setAccountId(accountId);
+        return toConfigResponse(defaults);
+    }
+
+    @Override
+    public PaymentRailConfigResponse getPaymentRailConfig(String accountNumber, PaymentMode paymentMode) {
+        BankAccount account = findByAccountNumberOrThrow(accountNumber);
+
+        BigDecimal usedToday = accountLimitRepository
+                .findByAccountIdAndTransactionType(account.getId(), paymentMode)
+                .map(AccountLimit::getUsedTodayAmount)
+                .orElse(BigDecimal.ZERO);
+
+        return accountPaymentConfigRepository.findByAccountId(account.getId())
+                .map(config -> buildRailConfigResponse(config, paymentMode, usedToday))
+                .orElseGet(() -> PaymentRailConfigResponse.builder()
+                        .enabled(false)
+                        .perTransactionLimit(BigDecimal.ZERO)
+                        .dailyLimit(BigDecimal.ZERO)
+                        .usedToday(usedToday)
+                        .remainingToday(BigDecimal.ZERO)
+                        .build());
+    }
+
+    private PaymentRailConfigResponse buildRailConfigResponse(AccountPaymentConfig config, PaymentMode paymentMode, BigDecimal usedToday) {
+        boolean enabled;
+        BigDecimal perTransactionLimit;
+        BigDecimal dailyLimit;
+
+        switch (paymentMode) {
+            case NEFT -> {
+                enabled = config.isNeftEnabled();
+                perTransactionLimit = config.getNeftPerTransactionLimit();
+                dailyLimit = config.getNeftDailyLimit();
+            }
+            case RTGS -> {
+                enabled = config.isRtgsEnabled();
+                perTransactionLimit = config.getRtgsPerTransactionLimit();
+                dailyLimit = config.getRtgsDailyLimit();
+            }
+            case IMPS -> {
+                enabled = config.isImpsEnabled();
+                perTransactionLimit = config.getImpsPerTransactionLimit();
+                dailyLimit = config.getImpsDailyLimit();
+            }
+            case UPI -> {
+                enabled = config.isUpiEnabled();
+                perTransactionLimit = config.getUpiPerTransactionLimit();
+                dailyLimit = config.getUpiDailyLimit();
+            }
+            default -> throw new IllegalArgumentException("Unsupported payment mode: " + paymentMode);
+        }
+
+        return PaymentRailConfigResponse.builder()
+                .enabled(enabled)
+                .perTransactionLimit(perTransactionLimit)
+                .dailyLimit(dailyLimit)
+                .usedToday(usedToday)
+                .remainingToday(dailyLimit.subtract(usedToday))
                 .build();
     }
 }

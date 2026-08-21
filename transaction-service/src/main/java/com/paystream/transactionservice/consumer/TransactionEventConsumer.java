@@ -89,7 +89,10 @@ public class TransactionEventConsumer {
                     event.getPaymentMode(),
                     event.getPaymentReferenceNumber(),
                     event.getSenderAccountNumber(),
-                    null,
+                    // Reversal credits the sender's own account back, so debit and credit
+                    // legs are the same account — credit_account_number is NOT NULL and
+                    // was previously left null, causing every reversal to fail to insert.
+                    event.getSenderAccountNumber(),
                     event.getAmount(),
                     status
             );

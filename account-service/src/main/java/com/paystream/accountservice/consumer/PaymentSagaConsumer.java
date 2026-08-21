@@ -38,7 +38,6 @@ public class PaymentSagaConsumer {
     private static final String DEBITED_TOPIC         = "payment.debited";
     private static final String DEBIT_FAILED_TOPIC    = "payment.debit.failed";
     private static final String CREDITED_TOPIC        = "payment.credited";
-    private static final String CREDIT_FAILED_TOPIC   = "payment.credit.failed";
     private static final String REVERSED_TOPIC        = "payment.reversed";
     private static final String REVERSAL_FAILED_TOPIC = "payment.reversal.failed";
     private static final String RECONCILIATION_TOPIC  = "payment.reconciliation.required";
@@ -47,6 +46,7 @@ public class PaymentSagaConsumer {
     private final OutboxEventRepository outboxEventRepository;
     private final ProcessedEventRepository processedEventRepository;
     private final ObjectMapper objectMapper;
+    private final SagaCompensationWriter sagaCompensationWriter;
 
     // ─── Step 1: Debit sender ─────────────────────────────────────────────────
 
@@ -129,21 +129,15 @@ public class PaymentSagaConsumer {
                                 .creditedAt(Instant.now())
                                 .build()));
                 log.info("Credited {} for {} {}", event.getBeneficiaryAccountNumber(), event.getPaymentMode(), ref);
+                markProcessed(ref, "DEBITED");
             } catch (Exception e) {
-                writeOutbox(ref, "PaymentCreditFailed", CREDIT_FAILED_TOPIC,
-                        objectMapper.writeValueAsString(PaymentCreditFailedEvent.builder()
-                                .paymentReferenceNumber(ref)
-                                .paymentMode(event.getPaymentMode())
-                                .senderAccountNumber(event.getSenderAccountNumber())
-                                .beneficiaryAccountNumber(event.getBeneficiaryAccountNumber())
-                                .amount(event.getAmount())
-                                .failureReason(e.getMessage())
-                                .failedAt(Instant.now())
-                                .build()));
                 log.warn("Credit failed for {} {}: {}", event.getPaymentMode(), ref, e.getMessage());
+                // accountService.credit() above already marked this method's shared transaction
+                // rollback-only, so the compensating write runs in its own REQUIRES_NEW
+                // transaction — otherwise it would silently vanish along with everything else
+                // when this transaction rolls back on commit.
+                sagaCompensationWriter.recordCreditFailure(event, ref, e.getMessage());
             }
-
-            markProcessed(ref, "DEBITED");
         } catch (Exception e) {
             log.error("PaymentSagaConsumer failed processing payment.debited: {}", payload, e);
         }

@@ -48,6 +48,25 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(new ApiError(Instant.now(), 503, "SERVICE_UNAVAILABLE", ex.getMessage()));
     }
+
+    @ExceptionHandler(PaymentRailNotEnabledException.class)
+    public ResponseEntity<ApiError> handleRailNotEnabled(PaymentRailNotEnabledException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(new ApiError(Instant.now(), 403, "PAYMENT_RAIL_NOT_ENABLED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(PerTransactionLimitExceededException.class)
+    public ResponseEntity<ApiError> handlePerTransactionLimitExceeded(PerTransactionLimitExceededException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ApiError(Instant.now(), 422, "PER_TRANSACTION_LIMIT_EXCEEDED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(DailyLimitExceededException.class)
+    public ResponseEntity<ApiError> handleDailyLimitExceeded(DailyLimitExceededException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ApiError(Instant.now(), 422, "DAILY_LIMIT_EXCEEDED", ex.getMessage()));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex) {
         String message = ex.getBindingResult().getFieldErrors().stream()
