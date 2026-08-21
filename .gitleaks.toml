@@ -1,0 +1,33 @@
+# Extends GitLeaks' default ruleset (regex/entropy-based secret text
+# detection). The default ruleset alone would NOT have caught the
+# committed JWT/PII keystore files found earlier in this project --
+# verified by running GitLeaks against this repo's history before
+# adding this rule: it found 5 findings, all fake example JWTs in
+# api-docs/openapi/auth-service.yaml, and nothing on the actual
+# paystream-jwt.jks / paystream-keystore.jceks files that were
+# committed to git. Binary keystores don't contain a regex-matchable
+# secret string, so text/entropy-based scanning alone misses them.
+# This rule matches on file path instead of content, so it catches the
+# class of leak regardless of what's inside the file.
+title = "paystream-gitleaks-extra"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "committed-keystore-file"
+description = "Keystore/private-key file committed to git (binary secrets that regex/entropy scanning alone misses)"
+path = '''(?i)\.(jks|jceks|p12|pfx|pem|key)$'''
+
+[allowlist]
+paths = [
+  '''\.gitleaks\.toml''',
+  # Build artifacts and vendored/generated content -- not source, and
+  # scanning them (especially target/ with compiled classes and
+  # re-packaged dependency jars) made a full working-tree scan take
+  # several minutes instead of seconds.
+  '''(^|/)target/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)uploads/''',
+  '''(^|/)\.git/''',
+]
