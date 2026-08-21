@@ -115,7 +115,7 @@ spec:
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
-                    sh 'mvn -pl common-lib,account-service -am checkstyle:check spotbugs:check -DskipTests'
+                    sh 'mvn -pl common-lib,account-service -am verify -DskipTests'
                 }
             }
             post {
