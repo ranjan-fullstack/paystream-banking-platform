@@ -16,50 +16,63 @@ kind: Pod
 spec:
   serviceAccountName: jenkins-agent
   containers:
+    # Only one of these runs actively at a time (each stage uses its own
+    # container in sequence) -- requests trimmed to what's needed for
+    # scheduling headroom, not comfortable steady-state, since 7
+    # tool containers requesting their "nice to have" defaults
+    # simultaneously (~1.7 CPU/3Gi total) didn't fit alongside
+    # everything else already running on the cluster. Limits stay
+    # generous enough for each stage to actually burst when it's its
+    # turn, same lesson as the dev workload's CPU-limit fix earlier.
     - name: maven
       image: maven:3.9.9-eclipse-temurin-17
       command: ['cat']
       tty: true
       resources:
-        requests: {cpu: 500m, memory: 1Gi}
-        limits: {memory: 2Gi}
+        requests: {cpu: 200m, memory: 512Mi}
+        limits: {cpu: "2", memory: 1536Mi}
     - name: kaniko
       image: gcr.io/kaniko-project/executor:v1.23.2-debug
       command: ['/busybox/cat']
       tty: true
       resources:
-        requests: {cpu: 200m, memory: 512Mi}
-        limits: {memory: 1Gi}
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {cpu: "1", memory: 768Mi}
     - name: awscli
       image: amazon/aws-cli:2.17.62
       command: ['cat']
       tty: true
       resources:
-        requests: {cpu: 100m, memory: 256Mi}
+        requests: {cpu: 50m, memory: 128Mi}
+        limits: {cpu: 500m, memory: 256Mi}
     - name: trivy
       image: aquasec/trivy:0.55.2
       command: ['cat']
       tty: true
       resources:
-        requests: {cpu: 200m, memory: 512Mi}
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {cpu: "1", memory: 512Mi}
     - name: gitleaks
       image: zricethezav/gitleaks:v8.21.2
       command: ['cat']
       tty: true
       resources:
-        requests: {cpu: 100m, memory: 256Mi}
+        requests: {cpu: 50m, memory: 128Mi}
+        limits: {cpu: 500m, memory: 256Mi}
     - name: kubectl
       image: bitnami/kubectl:1.31
       command: ['cat']
       tty: true
       resources:
-        requests: {cpu: 100m, memory: 128Mi}
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {cpu: 200m, memory: 128Mi}
     - name: git
       image: alpine/git:2.45.2
       command: ['cat']
       tty: true
       resources:
-        requests: {cpu: 100m, memory: 128Mi}
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {cpu: 200m, memory: 128Mi}
 """
         }
     }
