@@ -9,3 +9,7 @@ extraEnv:
   EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:80/eureka/
   SPRING_DATASOURCE_URL: "jdbc:mysql://mysql-dev:3306/paystream_auth?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC"
   REDIS_HOST: redis-dev
+  # Keystore no longer ships inside the jar -- mounted from AWS Secrets
+  # Manager via the secrets-store CSI volume (already mounted at
+  # /mnt/secrets-store for every secrets-enabled service).
+  SPRING_SECURITY_JWT_KEYSTORE_PATH: "file:/mnt/secrets-store/paystream-jwt.jks"

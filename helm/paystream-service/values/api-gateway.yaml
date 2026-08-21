@@ -12,3 +12,6 @@ extraEnv:
   SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:80"
   EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:80/eureka/
   SPRING_DATA_REDIS_HOST: redis-dev
+  # Same JWT keystore as auth-service, mounted the same way -- api-gateway
+  # only reads the public key/certificate out of it for verification.
+  JWT_KEYSTORE_PATH: "file:/mnt/secrets-store/paystream-jwt.jks"

@@ -3,3 +3,11 @@ image:
   repository: 198758256599.dkr.ecr.ap-south-1.amazonaws.com/customer-service
   tag: "latest"
 containerPort: 9002
+
+extraEnv:
+  SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:80"
+  EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:80/eureka/
+  SPRING_DATASOURCE_URL: "jdbc:mysql://mysql-dev:3306/paystream_customers?useSSL=true&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+  # PII-encryption keystore, mounted from Secrets Manager the same way as
+  # the JWT keystore -- never shipped inside the jar.
+  PAYSTREAM_KEYSTORE_PATH: "file:/mnt/secrets-store/paystream-keystore.jceks"

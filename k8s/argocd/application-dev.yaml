@@ -17,6 +17,7 @@ spec:
           - service: api-gateway
           - service: auth-service
           - service: account-service
+          - service: customer-service
   template:
     metadata:
       name: '{{service}}-dev'
