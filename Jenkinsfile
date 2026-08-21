@@ -60,7 +60,7 @@ spec:
         requests: {cpu: 50m, memory: 128Mi}
         limits: {cpu: 500m, memory: 256Mi}
     - name: kubectl
-      image: bitnami/kubectl:1.31
+      image: rancher/kubectl:v1.31.0
       command: ['cat']
       tty: true
       resources:
