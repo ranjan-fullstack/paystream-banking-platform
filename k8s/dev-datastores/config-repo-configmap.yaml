@@ -38,7 +38,7 @@ data:
       endpoints:
         web:
           exposure:
-            include: health,info,refresh,busrefresh
+            include: health,info,refresh,busrefresh,prometheus
       tracing:
         sampling:
           probability: 1.0
@@ -256,7 +256,7 @@ data:
       endpoints:
         web:
           exposure:
-            include: health,info,refresh,busrefresh
+            include: health,info,refresh,busrefresh,prometheus
       tracing:
         sampling:
           probability: 1.0
@@ -360,7 +360,7 @@ data:
       endpoints:
         web:
           exposure:
-            include: refresh,health,info,busrefresh
+            include: refresh,health,info,busrefresh,prometheus
       tracing:
         sampling:
           probability: 1.0
@@ -407,7 +407,7 @@ data:
       endpoints:
         web:
           exposure:
-            include: health,info,refresh,busrefresh
+            include: health,info,refresh,busrefresh,prometheus
       tracing:
         sampling:
           probability: 1.0
