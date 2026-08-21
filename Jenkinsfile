@@ -60,7 +60,7 @@ spec:
         requests: {cpu: 50m, memory: 128Mi}
         limits: {cpu: 500m, memory: 256Mi}
     - name: kubectl
-      image: rancher/kubectl:v1.31.0
+      image: alpine/k8s:1.31.1
       command: ['cat']
       tty: true
       resources:
