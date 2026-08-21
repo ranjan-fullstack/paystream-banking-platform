@@ -42,6 +42,14 @@ public class FraudAlert {
 
     private String reviewRemarks;
 
+    @Column(columnDefinition = "TEXT")
+    private String aiExplanation;
+
+    private Float aiRiskScore;
+
+    // RULE_ENGINE / AI / RULE_ENGINE + AI
+    private String detectionMethod;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

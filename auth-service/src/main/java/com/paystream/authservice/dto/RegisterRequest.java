@@ -1,14 +1,15 @@
 package com.paystream.authservice.dto;
 
-import com.paystream.authservice.entity.Role;
+import jakarta.validation.constraints.NotBlank;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
 public class RegisterRequest {
+    @NotBlank(message = "username is required")
     private String username;
-    private String password;
-    private Role role; // CUSTOMER / ADMIN / TELLER / COMPLIANCE_OFFICER / FRAUD_ANALYST
-}
 
+    @NotBlank(message = "password is required")
+    private String password;
+}

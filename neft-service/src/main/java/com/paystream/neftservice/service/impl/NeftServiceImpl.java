@@ -2,15 +2,19 @@ package com.paystream.neftservice.service.impl;
 
 import com.paystream.neftservice.client.AccountClient;
 import com.paystream.neftservice.client.dto.AccountValidationResponse;
+import com.paystream.neftservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.neftservice.dto.NeftBatchResponse;
 import com.paystream.neftservice.dto.NeftTransactionResponse;
 import com.paystream.neftservice.dto.NeftTransferRequest;
 import com.paystream.neftservice.entity.NeftBatch;
 import com.paystream.neftservice.entity.NeftTransaction;
 import com.paystream.neftservice.enums.NeftStatus;
+import com.paystream.neftservice.exception.DailyLimitExceededException;
 import com.paystream.neftservice.exception.InvalidAccountException;
 import com.paystream.neftservice.exception.NeftTransactionNotFoundException;
 import com.paystream.neftservice.exception.NeftWindowClosedException;
+import com.paystream.neftservice.exception.PaymentRailNotEnabledException;
+import com.paystream.neftservice.exception.PerTransactionLimitExceededException;
 import com.paystream.neftservice.repository.NeftBatchRepository;
 import com.paystream.neftservice.repository.NeftTransactionRepository;
 import com.paystream.neftservice.service.NeftService;
@@ -19,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -40,6 +45,8 @@ public class NeftServiceImpl implements NeftService {
     @Override
     @Transactional
     public NeftTransactionResponse initiateTransfer(NeftTransferRequest request) {
+        validatePaymentRail(request.getSenderAccountNumber(), request.getAmount());
+
         if (!windowValidator.isWithinWindow(LocalDateTime.now())) {
             throw new NeftWindowClosedException();
         }
@@ -130,5 +137,22 @@ public class NeftServiceImpl implements NeftService {
                 .failureCount(batch.getFailureCount())
                 .status(batch.getStatus())
                 .build();
+    }
+
+    private void validatePaymentRail(String senderAccountNumber, BigDecimal amount) {
+        PaymentRailConfigResponse config = accountClient.getPaymentConfig(senderAccountNumber, "NEFT");
+
+        if (!config.isEnabled()) {
+            throw new PaymentRailNotEnabledException(
+                    "NEFT transfers are not enabled for account " + senderAccountNumber + ". Please contact your branch.");
+        }
+        if (amount.compareTo(config.getPerTransactionLimit()) > 0) {
+            throw new PerTransactionLimitExceededException(
+                    "Amount ₹" + amount + " exceeds NEFT per-transaction limit of ₹" + config.getPerTransactionLimit());
+        }
+        if (amount.compareTo(config.getRemainingToday()) > 0) {
+            throw new DailyLimitExceededException(
+                    "NEFT daily limit reached. Remaining today: ₹" + config.getRemainingToday() + ". Resets at midnight.");
+        }
     }
 }

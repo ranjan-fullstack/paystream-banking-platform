@@ -46,6 +46,7 @@ class AgentRequest(BaseModel):
     account_number: str
     query: str  # natural language query from customer
     conversation_history: List[dict] = []  # for multi-turn conversation
+    jwt_token: Optional[str] = None  # forwarded as Authorization: Bearer <token> to PayStream APIs
 
 
 class AgentResponse(BaseModel):

@@ -2,6 +2,7 @@ package com.paystream.neftservice.client;
 
 import com.paystream.neftservice.client.dto.AccountValidationResponse;
 import com.paystream.neftservice.client.dto.AmountRequest;
+import com.paystream.neftservice.client.dto.PaymentRailConfigResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,4 +23,7 @@ public interface AccountClient {
 
     @PutMapping("/{accountNumber}/reverseDebit")
     void reverseDebit(@PathVariable("accountNumber") String accountNumber, @RequestBody AmountRequest request);
+
+    @GetMapping("/{accountNumber}/payment-config/{paymentMode}")
+    PaymentRailConfigResponse getPaymentConfig(@PathVariable("accountNumber") String accountNumber, @PathVariable("paymentMode") String paymentMode);
 }

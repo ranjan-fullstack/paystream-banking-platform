@@ -1,0 +1,23 @@
+CREATE TABLE account_payment_configs (
+    id UUID NOT NULL,
+    account_id UUID NOT NULL,
+    neft_enabled BOOLEAN NOT NULL,
+    rtgs_enabled BOOLEAN NOT NULL,
+    imps_enabled BOOLEAN NOT NULL,
+    upi_enabled BOOLEAN NOT NULL,
+    neft_daily_limit NUMERIC(19,4) NOT NULL,
+    rtgs_daily_limit NUMERIC(19,4) NOT NULL,
+    imps_daily_limit NUMERIC(19,4) NOT NULL,
+    upi_daily_limit NUMERIC(19,4) NOT NULL,
+    neft_per_transaction_limit NUMERIC(19,4) NOT NULL,
+    rtgs_per_transaction_limit NUMERIC(19,4) NOT NULL,
+    imps_per_transaction_limit NUMERIC(19,4) NOT NULL,
+    upi_per_transaction_limit NUMERIC(19,4) NOT NULL,
+    enabled_by VARCHAR(255),
+    enabled_at TIMESTAMP(6),
+    last_updated_by VARCHAR(255),
+    last_updated_at TIMESTAMP(6),
+    CONSTRAINT pk_account_payment_configs PRIMARY KEY (id),
+    CONSTRAINT uk_account_payment_configs_account UNIQUE (account_id),
+    CONSTRAINT fk_account_payment_configs_account FOREIGN KEY (account_id) REFERENCES bank_accounts (id)
+);

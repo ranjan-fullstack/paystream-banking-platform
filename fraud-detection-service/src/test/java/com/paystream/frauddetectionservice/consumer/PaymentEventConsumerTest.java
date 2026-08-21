@@ -2,6 +2,7 @@ package com.paystream.frauddetectionservice.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.commonlib.event.TransactionCompletedEvent;
+import com.paystream.frauddetectionservice.client.AiFraudClient;
 import com.paystream.frauddetectionservice.entity.FraudAlert;
 import com.paystream.frauddetectionservice.entity.TransactionLog;
 import com.paystream.frauddetectionservice.repository.FraudAlertRepository;
@@ -38,6 +39,9 @@ class PaymentEventConsumerTest {
     private FraudRuleEngine fraudRuleEngine;
 
     @Mock
+    private AiFraudClient aiFraudClient;
+
+    @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -45,7 +49,7 @@ class PaymentEventConsumerTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new PaymentEventConsumer(transactionLogRepository, fraudAlertRepository, fraudRuleEngine, kafkaTemplate, objectMapper);
+        consumer = new PaymentEventConsumer(transactionLogRepository, fraudAlertRepository, fraudRuleEngine, aiFraudClient, kafkaTemplate, objectMapper);
     }
 
     private String paymentEventJson(String referenceNumber) throws Exception {

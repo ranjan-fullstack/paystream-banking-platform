@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -8,6 +9,7 @@ from agents.tools.account_tool import account_tool
 from agents.tools.transaction_tool import transaction_tool
 from agents.tools.payment_tool import payment_tool
 from agents.tools.rbi_knowledge_tool import rbi_knowledge_tool
+from agents.tools.auth_context import set_jwt_token
 
 logger = logging.getLogger(__name__)
 
@@ -63,3 +65,18 @@ def build_agent_executor() -> AgentExecutor:
 
 
 banking_agent_executor = build_agent_executor()
+
+
+def invoke_agent(inputs: dict, jwt_token: Optional[str] = None) -> dict:
+    """Run the agent with jwt_token available to tool calls via auth_context.
+
+    jwt_token is deliberately not part of any tool's args_schema — it must
+    never be an LLM-fillable parameter — so it's threaded through a
+    contextvar that account_tool/transaction_tool/payment_tool read from
+    when building their Authorization header.
+    """
+    set_jwt_token(jwt_token)
+    try:
+        return banking_agent_executor.invoke(inputs)
+    finally:
+        set_jwt_token(None)

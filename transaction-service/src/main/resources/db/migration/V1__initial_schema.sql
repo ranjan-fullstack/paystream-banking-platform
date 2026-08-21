@@ -1,0 +1,21 @@
+CREATE TABLE transactions (
+    id UUID NOT NULL,
+    transaction_id VARCHAR(255) NOT NULL,
+    payment_mode VARCHAR(255) NOT NULL,
+    payment_reference_number VARCHAR(255) NOT NULL,
+    debit_account_number VARCHAR(255) NOT NULL,
+    credit_account_number VARCHAR(255) NOT NULL,
+    amount NUMERIC(19,4) NOT NULL,
+    currency VARCHAR(3) NOT NULL,
+    status VARCHAR(255) NOT NULL,
+    initiated_at TIMESTAMP(6) NOT NULL,
+    completed_at TIMESTAMP(6),
+    description VARCHAR(255),
+    sender_name VARCHAR(255),
+    beneficiary_name VARCHAR(255),
+    created_at TIMESTAMP(6) NOT NULL,
+    CONSTRAINT pk_transactions PRIMARY KEY (id),
+    CONSTRAINT uk_transactions_transaction_id UNIQUE (transaction_id),
+    CONSTRAINT ck_transactions_payment_mode CHECK (payment_mode IN ('NEFT','RTGS','IMPS','UPI')),
+    CONSTRAINT ck_transactions_status CHECK (status IN ('PENDING','COMPLETED','FAILED','RETURNED','DISPUTED'))
+);

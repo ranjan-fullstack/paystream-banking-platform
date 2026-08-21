@@ -3,10 +3,10 @@
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/paystream_fraud
+    url: jdbc:postgresql://localhost:5433/paystream_fraud
     #url: jdbc:postgresql://postgres:5432/paystream_fraud
-    username: ${FRAUD_DB_USERNAME}
-    password: ${FRAUD_DB_PASSWORD}
+    username: ${FRAUD_DB_USERNAME:postgres}
+    password: ${FRAUD_DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -18,11 +18,19 @@ spring:
       hibernate:
         format_sql: false
 
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 1
+
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:29092
     #bootstrap-servers: kafka:9092
     consumer:
       group-id: fraud-detection-service-group
+
+ai-service:
+  base-url: http://localhost:9013
+  #base-url: http://ai-service:9013
 
 management:
   endpoints:

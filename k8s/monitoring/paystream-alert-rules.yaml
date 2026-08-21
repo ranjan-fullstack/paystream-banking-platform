@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: paystream-error-rate
+  namespace: paystream-dev
+  labels:
+    # Required for kube-prometheus-stack's Prometheus CR to pick this up
+    # (its ruleSelector matches release: kube-prometheus-stack, same as
+    # the ServiceMonitor selector).
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: paystream.errorrate
+      rules:
+        - alert: PayStreamHighErrorRate
+          expr: >
+            100 * sum(rate(http_server_requests_seconds_count{job=~"account-service|auth-service|api-gateway|config-server|discovery-server|customer-service", outcome="SERVER_ERROR"}[5m])) by (job)
+            /
+            sum(rate(http_server_requests_seconds_count{job=~"account-service|auth-service|api-gateway|config-server|discovery-server|customer-service"}[5m])) by (job)
+            > 5
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.job }} 5xx error rate above 5%"
+            description: "{{ $labels.job }} has a 5xx error rate of {{ printf \"%.1f\" $value }}% over the last 5 minutes (threshold: 5%)."

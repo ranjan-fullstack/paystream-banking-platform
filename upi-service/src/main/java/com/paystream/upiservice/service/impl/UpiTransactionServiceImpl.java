@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.commonlib.event.PaymentInitiatedEvent;
 import com.paystream.upiservice.client.AccountClient;
 import com.paystream.upiservice.client.dto.AccountValidationResponse;
+import com.paystream.upiservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.upiservice.dto.*;
 import com.paystream.upiservice.entity.OutboxEvent;
 import com.paystream.upiservice.entity.UpiCollectRequest;
@@ -23,6 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -51,6 +53,8 @@ public class UpiTransactionServiceImpl implements UpiTransactionService {
         VirtualPaymentAddress receiver = findVpaOrThrow(request.getReceiverVpa());
         verifyPin(sender, request.getUpiPin());
 
+        validatePaymentRail(sender.getAccountNumber(), request.getAmount());
+
         AccountValidationResponse senderValidation = accountClient.validate(sender.getAccountNumber());
         if (!senderValidation.isValid()) {
             throw new InvalidAccountException("Sender account is not valid: " + senderValidation.getReason());
@@ -75,6 +79,8 @@ public class UpiTransactionServiceImpl implements UpiTransactionService {
     public UpiTransactionResponse collect(UpiCollectMoneyRequest request) {
         VirtualPaymentAddress payee = findVpaOrThrow(request.getRequestedByVpa());
         VirtualPaymentAddress payer = findVpaOrThrow(request.getRequestedFromVpa());
+
+        validatePaymentRail(payer.getAccountNumber(), request.getAmount());
 
         UpiTransaction txn = new UpiTransaction();
         txn.setUpiTransactionId(generateUniqueTransactionId());
@@ -237,5 +243,22 @@ public class UpiTransactionServiceImpl implements UpiTransactionService {
                 .expiresAt(txn.getExpiresAt())
                 .failureReason(txn.getFailureReason())
                 .build();
+    }
+
+    private void validatePaymentRail(String accountNumber, BigDecimal amount) {
+        PaymentRailConfigResponse config = accountClient.getPaymentConfig(accountNumber, "UPI");
+
+        if (!config.isEnabled()) {
+            throw new PaymentRailNotEnabledException(
+                    "UPI transfers are not enabled for account " + accountNumber + ". Please contact your branch.");
+        }
+        if (amount.compareTo(config.getPerTransactionLimit()) > 0) {
+            throw new PerTransactionLimitExceededException(
+                    "Amount ₹" + amount + " exceeds UPI per-transaction limit of ₹" + config.getPerTransactionLimit());
+        }
+        if (amount.compareTo(config.getRemainingToday()) > 0) {
+            throw new DailyLimitExceededException(
+                    "UPI daily limit reached. Remaining today: ₹" + config.getRemainingToday() + ". Resets at midnight.");
+        }
     }
 }

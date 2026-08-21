@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.commonlib.event.PaymentInitiatedEvent;
 import com.paystream.impsservice.client.AccountClient;
 import com.paystream.impsservice.client.dto.AccountValidationResponse;
+import com.paystream.impsservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.impsservice.dto.ImpsTransactionResponse;
 import com.paystream.impsservice.dto.ImpsTransferRequest;
 import com.paystream.impsservice.entity.ImpsTransaction;
@@ -11,9 +12,12 @@ import com.paystream.impsservice.entity.MmidRegistration;
 import com.paystream.impsservice.entity.OutboxEvent;
 import com.paystream.impsservice.enums.ImpsStatus;
 import com.paystream.impsservice.enums.TransferMode;
+import com.paystream.impsservice.exception.DailyLimitExceededException;
 import com.paystream.impsservice.exception.ImpsTransactionNotFoundException;
 import com.paystream.impsservice.exception.InvalidAccountException;
 import com.paystream.impsservice.exception.MmidNotFoundException;
+import com.paystream.impsservice.exception.PaymentRailNotEnabledException;
+import com.paystream.impsservice.exception.PerTransactionLimitExceededException;
 import com.paystream.impsservice.repository.ImpsTransactionRepository;
 import com.paystream.impsservice.repository.MmidRegistrationRepository;
 import com.paystream.impsservice.repository.OutboxEventRepository;
@@ -23,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
@@ -45,6 +50,8 @@ public class ImpsServiceImpl implements ImpsService {
     @Override
     @Transactional
     public ImpsTransactionResponse transfer(ImpsTransferRequest request) {
+        validatePaymentRail(request.getSenderAccountNumber(), request.getAmount());
+
         AccountValidationResponse senderValidation = accountClient.validate(request.getSenderAccountNumber());
         if (!senderValidation.isValid()) {
             throw new InvalidAccountException("Sender account is not valid: " + senderValidation.getReason());
@@ -147,5 +154,22 @@ public class ImpsServiceImpl implements ImpsService {
                 .completedAt(txn.getCompletedAt())
                 .failureReason(txn.getFailureReason())
                 .build();
+    }
+
+    private void validatePaymentRail(String senderAccountNumber, BigDecimal amount) {
+        PaymentRailConfigResponse config = accountClient.getPaymentConfig(senderAccountNumber, "IMPS");
+
+        if (!config.isEnabled()) {
+            throw new PaymentRailNotEnabledException(
+                    "IMPS transfers are not enabled for account " + senderAccountNumber + ". Please contact your branch.");
+        }
+        if (amount.compareTo(config.getPerTransactionLimit()) > 0) {
+            throw new PerTransactionLimitExceededException(
+                    "Amount ₹" + amount + " exceeds IMPS per-transaction limit of ₹" + config.getPerTransactionLimit());
+        }
+        if (amount.compareTo(config.getRemainingToday()) > 0) {
+            throw new DailyLimitExceededException(
+                    "IMPS daily limit reached. Remaining today: ₹" + config.getRemainingToday() + ". Resets at midnight.");
+        }
     }
 }

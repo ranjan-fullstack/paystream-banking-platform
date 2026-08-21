@@ -40,6 +40,7 @@ class PaymentSagaConsumerTest {
     @Mock private OutboxEventRepository outboxEventRepository;
     @Mock private ProcessedEventRepository processedEventRepository;
     @Mock private ObjectMapper objectMapper;
+    @Mock private SagaCompensationWriter sagaCompensationWriter;
 
     @InjectMocks
     private PaymentSagaConsumer paymentSagaConsumer;
@@ -113,6 +114,28 @@ class PaymentSagaConsumerTest {
         verify(outboxEventRepository).save(captor.capture());
         assertThat(captor.getValue().getEventType()).isEqualTo("PaymentCredited");
         assertThat(captor.getValue().getTopic()).isEqualTo("payment.credited");
+    }
+
+    @Test
+    @DisplayName("onPaymentDebited: credit failure delegates to SagaCompensationWriter in its own transaction")
+    void testOnPaymentDebited_CreditFails_DelegatesToCompensationWriter() throws Exception {
+        PaymentDebitedEvent event = PaymentDebitedEvent.builder()
+                .paymentReferenceNumber(REF).paymentMode("IMPS")
+                .senderAccountNumber("SENDER001").beneficiaryAccountNumber("BENE_MISSING")
+                .amount(AMOUNT).debitedAt(Instant.now()).build();
+
+        when(objectMapper.readValue(any(String.class), eq(PaymentDebitedEvent.class))).thenReturn(event);
+        doThrow(new RuntimeException("Account not found: BENE_MISSING"))
+                .when(accountService).credit(anyString(), any(AmountRequest.class));
+
+        paymentSagaConsumer.onPaymentDebited("{}");
+
+        // The compensating write must go through the injected collaborator (so its
+        // own @Transactional(REQUIRES_NEW) proxy applies) rather than being written
+        // directly here, which would share — and roll back with — the doomed transaction.
+        verify(sagaCompensationWriter).recordCreditFailure(eq(event), eq(REF), anyString());
+        verify(outboxEventRepository, never()).save(any());
+        verify(processedEventRepository, never()).save(any());
     }
 
     @Test

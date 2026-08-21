@@ -56,7 +56,6 @@ class AuthServiceTest {
         RegisterRequest request = new RegisterRequest();
         request.setUsername("ravi.kumar");
         request.setPassword("SecurePass@123");
-        request.setRole(Role.CUSTOMER);
 
         when(passwordEncoder.encode("SecurePass@123")).thenReturn("encoded-password");
 
@@ -79,7 +78,6 @@ class AuthServiceTest {
         RegisterRequest request = new RegisterRequest();
         request.setUsername("priya.sharma");
         request.setPassword("Password@123");
-        request.setRole(Role.CUSTOMER);
 
         when(passwordEncoder.encode(anyString())).thenReturn("encoded-password");
         when(userRepo.save(any(User.class)))

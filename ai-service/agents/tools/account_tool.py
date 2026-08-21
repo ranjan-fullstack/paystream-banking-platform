@@ -3,6 +3,7 @@ import logging
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from config.settings import settings
+from agents.tools.auth_context import auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ def get_account_info(account_number: str) -> str:
     """Get account balance and details for a customer."""
     url = f"{settings.PAYSTREAM_API_BASE}/api/v1/accounts/number/{account_number}"
     try:
-        response = httpx.get(url, timeout=10.0)
+        response = httpx.get(url, headers=auth_headers(), timeout=10.0)
         response.raise_for_status()
         return str(response.json())
     except httpx.HTTPError as e:

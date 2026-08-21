@@ -2,6 +2,7 @@ package com.paystream.upiservice.client;
 
 import com.paystream.upiservice.client.dto.AccountValidationResponse;
 import com.paystream.upiservice.client.dto.AmountRequest;
+import com.paystream.upiservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.upiservice.exception.ServiceUnavailableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -35,5 +36,11 @@ public class AccountClientFallback implements AccountClient {
     public void reverseDebit(String accountNumber, AmountRequest request) {
         log.error("Circuit breaker triggered for account-service reverseDebit({})", accountNumber);
         throw new ServiceUnavailableException("Account service unavailable — cannot process reversal for " + accountNumber);
+    }
+
+    @Override
+    public PaymentRailConfigResponse getPaymentConfig(String accountNumber, String paymentMode) {
+        log.error("Circuit breaker triggered for account-service getPaymentConfig({}, {})", accountNumber, paymentMode);
+        throw new ServiceUnavailableException("Account service unavailable — cannot verify " + paymentMode + " rail status for " + accountNumber);
     }
 }

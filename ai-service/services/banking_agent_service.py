@@ -2,7 +2,7 @@ import logging
 import re
 
 from models.schemas import AgentRequest, AgentResponse
-from agents.banking_agent import banking_agent_executor
+from agents.banking_agent import invoke_agent
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +50,14 @@ class BankingAgentService:
 
         conversation_text = self._format_history(history)
         try:
-            result = banking_agent_executor.invoke(
+            result = invoke_agent(
                 {
                     "input": request.query,
                     "customer_id": request.customer_id,
                     "account_number": request.account_number,
                     "conversation_history": conversation_text,
-                }
+                },
+                jwt_token=request.jwt_token,
             )
         except Exception as e:
             logger.error(f"Banking agent execution error: {e}")
