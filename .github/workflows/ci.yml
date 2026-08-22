@@ -59,6 +59,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Trivy's fs scan resolves the Maven dependency tree to fingerprint
+      # versions -- with no local ~/.m2, that means hitting Maven Central
+      # directly from a fresh runner, which gets rate-limited (429) on
+      # deep transitive POMs like infinispan-bom. build-test (above) already
+      # populates and saves the same cache via setup-java's cache: maven
+      # (keyed on hashFiles('**/pom.xml')) -- using the identical setup here
+      # restores that cache instead of starting a second cold download.
+      # dependency:go-offline is the explicit guarantee on top: even on a
+      # cache miss, .m2 is fully populated before Trivy ever runs.
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+
+      - name: Populate local Maven repository
+        run: mvn dependency:go-offline -B
+
       - name: Trivy — scan source + dependencies
         uses: aquasecurity/trivy-action@master
         with:
