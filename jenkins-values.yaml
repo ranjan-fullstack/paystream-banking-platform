@@ -11,6 +11,51 @@ controller:
     - warnings-ng
     - sonar
     - pipeline-utility-steps
+    # Required for the JCasC block below: configuration-as-code processes
+    # controller.JCasC.configScripts on every controller start; job-dsl is
+    # what makes the "jobs:" root element (used to declare
+    # account-service-pipeline) available to it. Neither plugin is in this
+    # chart's default installPlugins list once it's overridden here, so
+    # both have to be listed explicitly or JCasC silently does nothing.
+    - configuration-as-code
+    - job-dsl
+
+  JCasC:
+    # Default is false, which only lets JCasC fill in config that isn't
+    # already present. true makes it authoritative on every restart.
+    overwriteConfiguration: true
+    configScripts:
+      # No custom Kubernetes Cloud block here: the chart's own default JCasC
+      # config (controller.JCasC.defaultConfig, on by default) already
+      # provisions a "kubernetes" cloud in this exact namespace, pointed at
+      # this exact jenkinsUrl/jenkinsTunnel, containerCap 10, and
+      # agent.podRetention already defaults to "Never" -- everything the
+      # original manual Groovy script did, the chart already did on its
+      # own. A hand-written duplicate here doesn't get merged with the
+      # chart's cloud (same name, both applied) -- JCasC's clouds list is
+      # append, not upsert-by-name -- it just produces two clouds named
+      # "kubernetes". Confirmed by testing: restarting the pod after
+      # clearing to zero clouds still came back with 2, both from this
+      # block and the chart default, byte-identical.
+      account-service-pipeline-job: |
+        jobs:
+          - script: >
+              pipelineJob('account-service-pipeline') {
+                description('PayStream account-service CI/CD pipeline')
+                definition {
+                  cpsScm {
+                    scm {
+                      git {
+                        remote {
+                          url('https://github.com/ranjan-fullstack/paystream-banking-platform.git')
+                        }
+                        branch('*/main')
+                      }
+                    }
+                    scriptPath('Jenkinsfile')
+                  }
+                }
+              }
 
 persistence:
   storageClass: gp3
