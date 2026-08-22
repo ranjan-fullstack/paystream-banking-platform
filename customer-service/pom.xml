@@ -62,10 +62,15 @@
             <version>2.5.0</version>
         </dependency>
 
+        <!-- mysql:mysql-connector-java was relocated to these new
+             reverse-DNS-compliant coordinates; the old GAV isn't what
+             Trivy's advisory data tracks fixes against, so it kept
+             flagging CVE-2023-22102 even though 8.0.33 already had the
+             fix. Migrating the declared coordinate, not just the version. -->
         <dependency>
-            <groupId>mysql</groupId>
-            <artifactId>mysql-connector-java</artifactId>
-            <version>8.0.33</version>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>9.7.0</version>
         </dependency>
 
         <dependency>
