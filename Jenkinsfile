@@ -142,15 +142,22 @@ spec:
         // Real 217-test suite (Testcontainers-backed integration tests
         // included). This stage fails the build on any test failure --
         // no -Dmaven.test.failure.ignore anywhere.
+        //
+        // Widened to include auth-service now that its 12 tests genuinely
+        // pass (verified locally before this was added) -- api-gateway and
+        // customer-service stay out of this stage since their test suites
+        // haven't been run through this pipeline yet and an unrelated
+        // failure there shouldn't block this build; they're still covered
+        // by the (compile-only) Static Analysis and SonarCloud stages.
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
-                    sh 'mvn -pl common-lib,account-service -am test org.jacoco:jacoco-maven-plugin:report'
+                    sh 'mvn -pl common-lib,account-service,auth-service -am test org.jacoco:jacoco-maven-plugin:report'
                 }
             }
             post {
                 always {
-                    junit testResults: 'account-service/target/surefire-reports/*.xml', allowEmptyResults: false
+                    junit testResults: 'account-service/target/surefire-reports/*.xml,auth-service/target/surefire-reports/*.xml', allowEmptyResults: false
                     publishHTML(target: [
                         reportDir: 'account-service/target/site/jacoco',
                         reportFiles: 'index.html',
@@ -177,9 +184,10 @@ spec:
         // detection has real coverage there instead of only in the one
         // service that happens to run the fullest test suite. common-lib
         // isn't listed explicitly; -am pulls it in as a dependency of the
-        // others. Coverage XML is only supplied for account-service (the
-        // only module whose tests actually ran this pipeline) -- the other
-        // 3 will show 0%/no coverage data, which is honest, not a scan gap.
+        // others. Coverage XML is supplied for account-service and
+        // auth-service (both actually run tests in this pipeline now) --
+        // api-gateway/customer-service still show 0%/no coverage data,
+        // which is honest, not a scan gap.
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
@@ -189,7 +197,7 @@ spec:
                                 -Dsonar.projectKey=${SONAR_PROJECT} \
                                 -Dsonar.organization=${SONAR_ORG} \
                                 -Dsonar.java.coveragePlugin=jacoco \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=account-service/target/site/jacoco/jacoco.xml \
+                                -Dsonar.coverage.jacoco.xmlReportPaths=account-service/target/site/jacoco/jacoco.xml,auth-service/target/site/jacoco/jacoco.xml \
                                 -Dsonar.qualitygate.wait=true \
                                 -Dsonar.qualitygate.timeout=300
                         """
