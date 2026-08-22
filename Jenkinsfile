@@ -112,10 +112,20 @@ spec:
         // ─────────────────────────────────────────────
         // Checkstyle (Google style) + SpotBugs. Report-only for now --
         // see account-service/pom.xml for why failOnViolation is false.
+        //
+        // Widened to also compile auth-service/api-gateway/customer-service
+        // (-DskipTests, not their test suites -- those haven't been run
+        // through this pipeline before and a failure there shouldn't block
+        // an unrelated SAST scan) so the SonarCloud stage below has real
+        // target/classes to analyze for those modules, not just source
+        // text. Neither of these 3 modules declares checkstyle/spotbugs in
+        // its own pom.xml (only account-service does), so widening this
+        // doesn't add new style/bug gates -- verified before making this
+        // change.
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
-                    sh 'mvn -pl common-lib,account-service -am verify -DskipTests'
+                    sh 'mvn -pl common-lib,account-service,auth-service,api-gateway,customer-service -am verify -DskipTests'
                 }
             }
             post {
@@ -160,16 +170,26 @@ spec:
         // delivering a webhook back to Jenkins -- not possible here since
         // Jenkins has no public ingress and isn't reachable from
         // SonarCloud's servers. Same gate, no public exposure required.
+        //
+        // Widened from account-service-only to also cover
+        // auth-service/api-gateway/customer-service -- the modules that
+        // actually own keystore/credential handling -- so security-hotspot
+        // detection has real coverage there instead of only in the one
+        // service that happens to run the fullest test suite. common-lib
+        // isn't listed explicitly; -am pulls it in as a dependency of the
+        // others. Coverage XML is only supplied for account-service (the
+        // only module whose tests actually ran this pipeline) -- the other
+        // 3 will show 0%/no coverage data, which is honest, not a scan gap.
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
                     withSonarQubeEnv('SonarCloud') {
                         sh """
-                            mvn -pl account-service -am org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                            mvn -pl account-service,auth-service,api-gateway,customer-service -am org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
                                 -Dsonar.projectKey=${SONAR_PROJECT} \
                                 -Dsonar.organization=${SONAR_ORG} \
                                 -Dsonar.java.coveragePlugin=jacoco \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                                -Dsonar.coverage.jacoco.xmlReportPaths=account-service/target/site/jacoco/jacoco.xml \
                                 -Dsonar.qualitygate.wait=true \
                                 -Dsonar.qualitygate.timeout=300
                         """
