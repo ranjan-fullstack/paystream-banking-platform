@@ -1,0 +1,20 @@
+controller:
+  installPlugins:
+    - kubernetes
+    - workflow-aggregator
+    - git
+    - github
+    - credentials-binding
+    - junit
+    - jacoco
+    - htmlpublisher
+    - warnings-ng
+    - sonar
+    - pipeline-utility-steps
+
+persistence:
+  storageClass: gp3
+
+serviceAccount:
+  create: false
+  name: jenkins-agent
