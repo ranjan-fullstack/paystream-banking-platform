@@ -113,19 +113,15 @@ spec:
         // Checkstyle (Google style) + SpotBugs. Report-only for now --
         // see account-service/pom.xml for why failOnViolation is false.
         //
-        // Widened to also compile auth-service/api-gateway/customer-service
-        // (-DskipTests, not their test suites -- those haven't been run
-        // through this pipeline before and a failure there shouldn't block
-        // an unrelated SAST scan) so the SonarCloud stage below has real
-        // target/classes to analyze for those modules, not just source
-        // text. Neither of these 3 modules declares checkstyle/spotbugs in
-        // its own pom.xml (only account-service does), so widening this
-        // doesn't add new style/bug gates -- verified before making this
-        // change.
+        // Full reactor now (no -pl) -- every module's test suite has been
+        // verified locally at this point, so there's no longer a reason to
+        // hold any of them back to compile-only. Only account-service
+        // declares checkstyle/spotbugs in its own pom.xml, so this doesn't
+        // add new style/bug gates for the rest.
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
-                    sh 'mvn -pl common-lib,account-service,auth-service,api-gateway,customer-service -am verify -DskipTests'
+                    sh 'mvn verify -DskipTests'
                 }
             }
             post {
@@ -140,24 +136,25 @@ spec:
         stage('Unit + Integration Tests') {
         // ─────────────────────────────────────────────
         // Real 217-test suite (Testcontainers-backed integration tests
-        // included). This stage fails the build on any test failure --
-        // no -Dmaven.test.failure.ignore anywhere.
+        // included) plus every other service's suite. This stage fails the
+        // build on any test failure -- no -Dmaven.test.failure.ignore
+        // anywhere.
         //
-        // Widened to include auth-service now that its 12 tests genuinely
-        // pass (verified locally before this was added) -- api-gateway and
-        // customer-service stay out of this stage since their test suites
-        // haven't been run through this pipeline yet and an unrelated
-        // failure there shouldn't block this build; they're still covered
-        // by the (compile-only) Static Analysis and SonarCloud stages.
+        // Full reactor now (no -pl): every module's suite was run and
+        // verified locally before this was widened -- including the
+        // payment-rail config NPE found and fixed identically in
+        // neft-service, rtgs-service, imps-service, and upi-service
+        // (validatePaymentRail() called before window/account/PIN checks,
+        // no mock for the new branch-banking payment-rail lookup).
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
-                    sh 'mvn -pl common-lib,account-service,auth-service -am test org.jacoco:jacoco-maven-plugin:report'
+                    sh 'mvn test org.jacoco:jacoco-maven-plugin:report'
                 }
             }
             post {
                 always {
-                    junit testResults: 'account-service/target/surefire-reports/*.xml,auth-service/target/surefire-reports/*.xml', allowEmptyResults: false
+                    junit testResults: '*/target/surefire-reports/*.xml', allowEmptyResults: false
                     publishHTML(target: [
                         reportDir: 'account-service/target/site/jacoco',
                         reportFiles: 'index.html',
@@ -178,26 +175,21 @@ spec:
         // Jenkins has no public ingress and isn't reachable from
         // SonarCloud's servers. Same gate, no public exposure required.
         //
-        // Widened from account-service-only to also cover
-        // auth-service/api-gateway/customer-service -- the modules that
-        // actually own keystore/credential handling -- so security-hotspot
-        // detection has real coverage there instead of only in the one
-        // service that happens to run the fullest test suite. common-lib
-        // isn't listed explicitly; -am pulls it in as a dependency of the
-        // others. Coverage XML is supplied for account-service and
-        // auth-service (both actually run tests in this pipeline now) --
-        // api-gateway/customer-service still show 0%/no coverage data,
-        // which is honest, not a scan gap.
+        // Full reactor now (no -pl) -- every module's tests pass, so every
+        // module gets real SAST coverage, not just the 4 that were added
+        // incrementally earlier tonight. Coverage XML path is a wildcard
+        // matching every module's jacoco.xml, since every module now
+        // actually runs tests in this pipeline.
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
                     withSonarQubeEnv('SonarCloud') {
                         sh """
-                            mvn -pl account-service,auth-service,api-gateway,customer-service -am org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
                                 -Dsonar.projectKey=${SONAR_PROJECT} \
                                 -Dsonar.organization=${SONAR_ORG} \
                                 -Dsonar.java.coveragePlugin=jacoco \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=account-service/target/site/jacoco/jacoco.xml,auth-service/target/site/jacoco/jacoco.xml \
+                                -Dsonar.coverage.jacoco.xmlReportPaths=*/target/site/jacoco/jacoco.xml \
                                 -Dsonar.qualitygate.wait=true \
                                 -Dsonar.qualitygate.timeout=300
                         """
