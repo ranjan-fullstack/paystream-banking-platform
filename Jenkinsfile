@@ -165,7 +165,7 @@ spec:
                 container('maven') {
                     withSonarQubeEnv('SonarCloud') {
                         sh """
-                            mvn -pl account-service -am sonar:sonar \
+                            mvn -pl account-service -am org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
                                 -Dsonar.projectKey=${SONAR_PROJECT} \
                                 -Dsonar.organization=${SONAR_ORG} \
                                 -Dsonar.java.coveragePlugin=jacoco \
