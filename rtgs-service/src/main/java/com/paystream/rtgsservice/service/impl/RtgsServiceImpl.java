@@ -17,6 +17,7 @@ import com.paystream.rtgsservice.exception.PerTransactionLimitExceededException;
 import com.paystream.rtgsservice.exception.RtgsAlreadySettledException;
 import com.paystream.rtgsservice.exception.RtgsTransactionNotFoundException;
 import com.paystream.rtgsservice.exception.RtgsWindowClosedException;
+import com.paystream.rtgsservice.exception.ServiceUnavailableException;
 import com.paystream.rtgsservice.repository.OutboxEventRepository;
 import com.paystream.rtgsservice.repository.RtgsTransactionRepository;
 import com.paystream.rtgsservice.service.RtgsService;
@@ -163,6 +164,14 @@ public class RtgsServiceImpl implements RtgsService {
     private void validatePaymentRail(String senderAccountNumber, BigDecimal amount) {
         PaymentRailConfigResponse config = accountClient.getPaymentConfig(senderAccountNumber, "RTGS");
 
+        // Distinct from the circuit-breaker fallback (which covers account-service
+        // being unreachable): this is a successful call that came back empty --
+        // an account-service bug, not a network/availability problem -- but still
+        // something the caller needs a diagnosable error for, not a bare NPE.
+        if (config == null) {
+            throw new ServiceUnavailableException(
+                    "Unable to verify RTGS payment rail configuration for account " + senderAccountNumber);
+        }
         if (!config.isEnabled()) {
             throw new PaymentRailNotEnabledException(
                     "RTGS transfers are not enabled for account " + senderAccountNumber + ". Please contact your branch.");

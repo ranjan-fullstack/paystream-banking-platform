@@ -3,6 +3,7 @@ package com.paystream.rtgsservice.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.rtgsservice.client.AccountClient;
 import com.paystream.rtgsservice.client.dto.AccountValidationResponse;
+import com.paystream.rtgsservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.rtgsservice.dto.RtgsTransactionResponse;
 import com.paystream.rtgsservice.dto.RtgsTransferRequest;
 import com.paystream.rtgsservice.entity.OutboxEvent;
@@ -12,6 +13,7 @@ import com.paystream.rtgsservice.enums.RtgsStatus;
 import com.paystream.rtgsservice.exception.RtgsAlreadySettledException;
 import com.paystream.rtgsservice.exception.RtgsTransactionNotFoundException;
 import com.paystream.rtgsservice.exception.RtgsWindowClosedException;
+import com.paystream.rtgsservice.exception.ServiceUnavailableException;
 import com.paystream.rtgsservice.repository.OutboxEventRepository;
 import com.paystream.rtgsservice.repository.RtgsTransactionRepository;
 import com.paystream.rtgsservice.service.impl.RtgsServiceImpl;
@@ -74,9 +76,24 @@ class RtgsServiceTest {
         return request;
     }
 
+    // validatePaymentRail() runs before window/account checks in
+    // RtgsServiceImpl.initiateTransfer(), so every test that calls
+    // initiateTransfer() needs this mocked -- or it NPEs on the unstubbed
+    // config before ever reaching the behavior under test.
+    private PaymentRailConfigResponse buildEnabledConfig() {
+        PaymentRailConfigResponse config = new PaymentRailConfigResponse();
+        config.setEnabled(true);
+        config.setPerTransactionLimit(new BigDecimal("10000000.00"));
+        config.setDailyLimit(new BigDecimal("10000000.00"));
+        config.setUsedToday(BigDecimal.ZERO);
+        config.setRemainingToday(new BigDecimal("10000000.00"));
+        return config;
+    }
+
     private void stubHappyPath(RtgsTransferRequest request) {
         AccountValidationResponse validation = new AccountValidationResponse();
         validation.setValid(true);
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(windowValidator.isWithinWindow(any(LocalDateTime.class))).thenReturn(true);
         when(accountClient.validate(request.getSenderAccountNumber())).thenReturn(validation);
         when(rtgsTransactionRepository.existsByRtgsReferenceNumber(anyString())).thenReturn(false);
@@ -144,6 +161,7 @@ class RtgsServiceTest {
     @DisplayName("Should throw exception when initiating RTGS outside the settlement window")
     void testInitiateTransfer_OutsideWindow_throwsException() {
         RtgsTransferRequest request = buildRequest();
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(windowValidator.isWithinWindow(any(LocalDateTime.class))).thenReturn(false);
 
         assertThatThrownBy(() -> rtgsService.initiateTransfer(request))
@@ -156,6 +174,7 @@ class RtgsServiceTest {
     @DisplayName("Should throw exception when initiating RTGS on a Sunday")
     void testInitiateTransfer_WeekendSunday_throwsException() {
         RtgsTransferRequest request = buildRequest();
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(windowValidator.isWithinWindow(any(LocalDateTime.class))).thenReturn(false);
 
         assertThatThrownBy(() -> rtgsService.initiateTransfer(request))
@@ -168,6 +187,7 @@ class RtgsServiceTest {
     @DisplayName("Should throw exception when initiating RTGS on Saturday after 1:00 PM")
     void testInitiateTransfer_SaturdayAfter1PM_throwsException() {
         RtgsTransferRequest request = buildRequest();
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(windowValidator.isWithinWindow(any(LocalDateTime.class))).thenReturn(false);
 
         assertThatThrownBy(() -> rtgsService.initiateTransfer(request))
@@ -185,6 +205,20 @@ class RtgsServiceTest {
         RtgsTransactionResponse response = rtgsService.initiateTransfer(request);
 
         assertThat(response.getStatus()).isEqualTo(RtgsStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("Should throw ServiceUnavailableException when account-service returns an empty payment rail config")
+    void testInitiateTransfer_PaymentRailConfigNull_throwsException() {
+        RtgsTransferRequest request = buildRequest();
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(null);
+
+        assertThatThrownBy(() -> rtgsService.initiateTransfer(request))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining(request.getSenderAccountNumber());
+
+        verify(windowValidator, never()).isWithinWindow(any());
+        verify(rtgsTransactionRepository, never()).save(any());
     }
 
     @Test
