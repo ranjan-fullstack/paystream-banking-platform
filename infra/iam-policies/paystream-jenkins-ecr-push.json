@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECRAuth",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ECRPushAndScanPull",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-south-1:198758256599:repository/discovery-server",
+        "arn:aws:ecr:ap-south-1:198758256599:repository/config-server",
+        "arn:aws:ecr:ap-south-1:198758256599:repository/api-gateway",
+        "arn:aws:ecr:ap-south-1:198758256599:repository/customer-service",
+        "arn:aws:ecr:ap-south-1:198758256599:repository/auth-service",
+        "arn:aws:ecr:ap-south-1:198758256599:repository/account-service"
+      ]
+    }
+  ]
+}
