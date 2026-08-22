@@ -26,9 +26,12 @@
             <artifactId>spring-cloud-starter-bus-amqp</artifactId>
         </dependency>
 
+        <!-- Not managed by any BOM in Spring Cloud 2025.0.3's dependency chain
+             (it was in 2023.0.3's); pinned explicitly to the latest release. -->
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-rsa</artifactId>
+            <version>1.1.5</version>
         </dependency>
 
 
