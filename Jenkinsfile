@@ -151,7 +151,15 @@ spec:
         }
 
         // ─────────────────────────────────────────────
-        stage('SAST — SonarCloud') {
+        stage('SAST — SonarCloud + Quality Gate') {
+        // ─────────────────────────────────────────────
+        // sonar.qualitygate.wait=true makes the scanner itself poll
+        // SonarCloud and block until the gate resolves, failing this stage
+        // (non-zero exit) on a failed gate. This replaces the separate
+        // waitForQualityGate pipeline step, which depends on SonarCloud
+        // delivering a webhook back to Jenkins -- not possible here since
+        // Jenkins has no public ingress and isn't reachable from
+        // SonarCloud's servers. Same gate, no public exposure required.
         // ─────────────────────────────────────────────
             steps {
                 container('maven') {
@@ -161,22 +169,11 @@ spec:
                                 -Dsonar.projectKey=${SONAR_PROJECT} \
                                 -Dsonar.organization=${SONAR_ORG} \
                                 -Dsonar.java.coveragePlugin=jacoco \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                                -Dsonar.qualitygate.wait=true \
+                                -Dsonar.qualitygate.timeout=300
                         """
                     }
-                }
-            }
-        }
-
-        // ─────────────────────────────────────────────
-        stage('Quality Gate') {
-        // ─────────────────────────────────────────────
-        // Fails the build if SonarCloud's gate doesn't pass -- this is
-        // a real gate, not a fire-and-forget scan.
-        // ─────────────────────────────────────────────
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
                 }
             }
         }
