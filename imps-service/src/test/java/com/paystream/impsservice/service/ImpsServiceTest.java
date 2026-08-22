@@ -3,6 +3,7 @@ package com.paystream.impsservice.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.impsservice.client.AccountClient;
 import com.paystream.impsservice.client.dto.AccountValidationResponse;
+import com.paystream.impsservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.impsservice.dto.ImpsTransactionResponse;
 import com.paystream.impsservice.dto.ImpsTransferRequest;
 import com.paystream.impsservice.entity.ImpsTransaction;
@@ -11,6 +12,7 @@ import com.paystream.impsservice.entity.OutboxEvent;
 import com.paystream.impsservice.enums.ImpsStatus;
 import com.paystream.impsservice.enums.TransferMode;
 import com.paystream.impsservice.exception.MmidNotFoundException;
+import com.paystream.impsservice.exception.ServiceUnavailableException;
 import com.paystream.impsservice.repository.ImpsTransactionRepository;
 import com.paystream.impsservice.repository.MmidRegistrationRepository;
 import com.paystream.impsservice.repository.OutboxEventRepository;
@@ -71,9 +73,24 @@ class ImpsServiceTest {
         return request;
     }
 
+    // validatePaymentRail() runs before every other check in
+    // ImpsServiceImpl.transfer() (account validation, MMID resolution),
+    // so every test that calls transfer() needs this mocked -- or it NPEs
+    // on the unstubbed config before ever reaching the behavior under test.
+    private PaymentRailConfigResponse buildEnabledConfig() {
+        PaymentRailConfigResponse config = new PaymentRailConfigResponse();
+        config.setEnabled(true);
+        config.setPerTransactionLimit(new BigDecimal("500000.00"));
+        config.setDailyLimit(new BigDecimal("500000.00"));
+        config.setUsedToday(BigDecimal.ZERO);
+        config.setRemainingToday(new BigDecimal("500000.00"));
+        return config;
+    }
+
     private void stubValidSenderAndPersistence() {
         AccountValidationResponse validation = new AccountValidationResponse();
         validation.setValid(true);
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(accountClient.validate(anyString())).thenReturn(validation);
         when(impsTransactionRepository.existsByImpsReferenceNumber(anyString())).thenReturn(false);
         when(impsTransactionRepository.save(any(ImpsTransaction.class))).thenAnswer(inv -> {
@@ -186,6 +203,7 @@ class ImpsServiceTest {
 
         AccountValidationResponse validation = new AccountValidationResponse();
         validation.setValid(true);
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(accountClient.validate(anyString())).thenReturn(validation);
         when(mmidRegistrationRepository.findByMobileNumber("9876501234")).thenReturn(Optional.of(registration));
 
@@ -206,5 +224,19 @@ class ImpsServiceTest {
         ImpsTransactionResponse response = impsService.transfer(request);
 
         assertThat(response.getStatus()).isEqualTo(ImpsStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("Should throw ServiceUnavailableException when account-service returns an empty payment rail config")
+    void testInitiateTransfer_PaymentRailConfigNull_throwsException() {
+        ImpsTransferRequest request = buildAccountIfscRequest();
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(null);
+
+        assertThatThrownBy(() -> impsService.transfer(request))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining(request.getSenderAccountNumber());
+
+        verify(accountClient, never()).validate(anyString());
+        verify(impsTransactionRepository, never()).save(any());
     }
 }

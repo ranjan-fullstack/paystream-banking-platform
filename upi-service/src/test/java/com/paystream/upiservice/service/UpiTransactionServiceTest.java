@@ -3,6 +3,7 @@ package com.paystream.upiservice.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paystream.upiservice.client.AccountClient;
 import com.paystream.upiservice.client.dto.AccountValidationResponse;
+import com.paystream.upiservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.upiservice.dto.*;
 import com.paystream.upiservice.entity.OutboxEvent;
 import com.paystream.upiservice.entity.UpiCollectRequest;
@@ -13,6 +14,7 @@ import com.paystream.upiservice.enums.UpiTransactionStatus;
 import com.paystream.upiservice.enums.UpiTransactionType;
 import com.paystream.upiservice.exception.CollectRequestExpiredException;
 import com.paystream.upiservice.exception.InvalidPinException;
+import com.paystream.upiservice.exception.ServiceUnavailableException;
 import com.paystream.upiservice.repository.OutboxEventRepository;
 import com.paystream.upiservice.repository.UpiCollectRequestRepository;
 import com.paystream.upiservice.repository.UpiTransactionRepository;
@@ -38,6 +40,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -67,6 +70,21 @@ class UpiTransactionServiceTest {
         return entity;
     }
 
+    // validatePaymentRail() is called from pay() (after the PIN check) and
+    // collect() -- every test exercising either of those needs this mocked,
+    // or it NPEs on the unstubbed config before reaching the behavior under
+    // test. respondToCollect() and refund() never call it, so their tests
+    // are unaffected.
+    private PaymentRailConfigResponse buildEnabledConfig() {
+        PaymentRailConfigResponse config = new PaymentRailConfigResponse();
+        config.setEnabled(true);
+        config.setPerTransactionLimit(new BigDecimal("100000.00"));
+        config.setDailyLimit(new BigDecimal("100000.00"));
+        config.setUsedToday(BigDecimal.ZERO);
+        config.setRemainingToday(new BigDecimal("100000.00"));
+        return config;
+    }
+
     private void stubSaveAssignsId() {
         when(upiTransactionRepository.save(any(UpiTransaction.class))).thenAnswer(inv -> {
             UpiTransaction saved = inv.getArgument(0);
@@ -93,6 +111,7 @@ class UpiTransactionServiceTest {
         when(vpaRepository.findByVpa("rahul.dev@paystream")).thenReturn(Optional.of(receiver));
         AccountValidationResponse validation = new AccountValidationResponse();
         validation.setValid(true);
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(accountClient.validate("1111222233334444")).thenReturn(validation);
         when(upiTransactionRepository.existsByUpiTransactionId(any())).thenReturn(false);
         stubSaveAssignsId();
@@ -123,6 +142,7 @@ class UpiTransactionServiceTest {
         when(vpaRepository.findByVpa("rahul.dev@paystream")).thenReturn(Optional.of(receiver));
         AccountValidationResponse validation = new AccountValidationResponse();
         validation.setValid(true);
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(accountClient.validate("1111222233334444")).thenReturn(validation);
         when(upiTransactionRepository.existsByUpiTransactionId(any())).thenReturn(false);
         stubSaveAssignsId();
@@ -160,6 +180,29 @@ class UpiTransactionServiceTest {
     }
 
     @Test
+    @DisplayName("pay() should throw ServiceUnavailableException when account-service returns an empty payment rail config")
+    void testPay_PaymentRailConfigNull_throwsException() {
+        VirtualPaymentAddress sender = buildVpa("anita.rao@paystream", "1111222233334444", "1234");
+        VirtualPaymentAddress receiver = buildVpa("rahul.dev@paystream", "5555666677778888", null);
+
+        UpiPayRequest request = new UpiPayRequest();
+        request.setSenderVpa("anita.rao@paystream");
+        request.setReceiverVpa("rahul.dev@paystream");
+        request.setAmount(new BigDecimal("2500.00"));
+        request.setUpiPin("1234");
+
+        when(vpaRepository.findByVpa("anita.rao@paystream")).thenReturn(Optional.of(sender));
+        when(vpaRepository.findByVpa("rahul.dev@paystream")).thenReturn(Optional.of(receiver));
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(null);
+
+        assertThatThrownBy(() -> upiTransactionService.pay(request))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining("1111222233334444");
+
+        verify(upiTransactionRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("Should reject a UPI pay request whose amount exceeds the Rs. 1,00,000 per-transaction limit")
     void testPay_AmountExceedsLimit_throwsException() {
         UpiPayRequest request = new UpiPayRequest();
@@ -188,6 +231,7 @@ class UpiTransactionServiceTest {
 
         when(vpaRepository.findByVpa("merchant.shop@paystream")).thenReturn(Optional.of(payee));
         when(vpaRepository.findByVpa("anita.rao@paystream")).thenReturn(Optional.of(payer));
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(upiTransactionRepository.existsByUpiTransactionId(any())).thenReturn(false);
         stubSaveAssignsId();
         when(upiCollectRequestRepository.save(any(UpiCollectRequest.class))).thenAnswer(inv -> inv.getArgument(0));

@@ -18,6 +18,7 @@ import com.paystream.impsservice.exception.InvalidAccountException;
 import com.paystream.impsservice.exception.MmidNotFoundException;
 import com.paystream.impsservice.exception.PaymentRailNotEnabledException;
 import com.paystream.impsservice.exception.PerTransactionLimitExceededException;
+import com.paystream.impsservice.exception.ServiceUnavailableException;
 import com.paystream.impsservice.repository.ImpsTransactionRepository;
 import com.paystream.impsservice.repository.MmidRegistrationRepository;
 import com.paystream.impsservice.repository.OutboxEventRepository;
@@ -159,6 +160,14 @@ public class ImpsServiceImpl implements ImpsService {
     private void validatePaymentRail(String senderAccountNumber, BigDecimal amount) {
         PaymentRailConfigResponse config = accountClient.getPaymentConfig(senderAccountNumber, "IMPS");
 
+        // Distinct from the circuit-breaker fallback (which covers account-service
+        // being unreachable): this is a successful call that came back empty --
+        // an account-service bug, not a network/availability problem -- but still
+        // something the caller needs a diagnosable error for, not a bare NPE.
+        if (config == null) {
+            throw new ServiceUnavailableException(
+                    "Unable to verify IMPS payment rail configuration for account " + senderAccountNumber);
+        }
         if (!config.isEnabled()) {
             throw new PaymentRailNotEnabledException(
                     "IMPS transfers are not enabled for account " + senderAccountNumber + ". Please contact your branch.");

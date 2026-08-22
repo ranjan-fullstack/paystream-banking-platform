@@ -248,6 +248,14 @@ public class UpiTransactionServiceImpl implements UpiTransactionService {
     private void validatePaymentRail(String accountNumber, BigDecimal amount) {
         PaymentRailConfigResponse config = accountClient.getPaymentConfig(accountNumber, "UPI");
 
+        // Distinct from the circuit-breaker fallback (which covers account-service
+        // being unreachable): this is a successful call that came back empty --
+        // an account-service bug, not a network/availability problem -- but still
+        // something the caller needs a diagnosable error for, not a bare NPE.
+        if (config == null) {
+            throw new ServiceUnavailableException(
+                    "Unable to verify UPI payment rail configuration for account " + accountNumber);
+        }
         if (!config.isEnabled()) {
             throw new PaymentRailNotEnabledException(
                     "UPI transfers are not enabled for account " + accountNumber + ". Please contact your branch.");
