@@ -15,6 +15,10 @@ import java.util.UUID;
 @Setter
 public class AccountPaymentConfig {
 
+    // Standard-tier default: NEFT and IMPS both default to this limit before
+    // any enterprise/premium tier override is applied.
+    private static final BigDecimal DEFAULT_STANDARD_LIMIT = new BigDecimal("500000.00");
+
     @Id
     @UuidGenerator
     private UUID id;
@@ -35,13 +39,13 @@ public class AccountPaymentConfig {
     private boolean upiEnabled = false;
 
     @Column(nullable = false, precision = 19, scale = 4)
-    private BigDecimal neftDailyLimit = new BigDecimal("500000.00");
+    private BigDecimal neftDailyLimit = DEFAULT_STANDARD_LIMIT;
 
     @Column(nullable = false, precision = 19, scale = 4)
     private BigDecimal rtgsDailyLimit = new BigDecimal("10000000.00");
 
     @Column(nullable = false, precision = 19, scale = 4)
-    private BigDecimal impsDailyLimit = new BigDecimal("500000.00");
+    private BigDecimal impsDailyLimit = DEFAULT_STANDARD_LIMIT;
 
     @Column(nullable = false, precision = 19, scale = 4)
     private BigDecimal upiDailyLimit = new BigDecimal("100000.00");
@@ -53,7 +57,7 @@ public class AccountPaymentConfig {
     private BigDecimal rtgsPerTransactionLimit = new BigDecimal("10000000.00");
 
     @Column(nullable = false, precision = 19, scale = 4)
-    private BigDecimal impsPerTransactionLimit = new BigDecimal("500000.00");
+    private BigDecimal impsPerTransactionLimit = DEFAULT_STANDARD_LIMIT;
 
     @Column(nullable = false, precision = 19, scale = 4)
     private BigDecimal upiPerTransactionLimit = new BigDecimal("100000.00");

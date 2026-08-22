@@ -30,6 +30,11 @@ public class OutboxPublisher {
                 event.setPublished(true);
                 event.setPublishedAt(LocalDateTime.now());
                 outboxEventRepository.save(event);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Interrupted while publishing outbox event {} (type={}) to topic {}",
+                        event.getId(), event.getEventType(), event.getTopic(), e);
+                break;
             } catch (Exception e) {
                 log.error("Failed to publish outbox event {} (type={}) to topic {}",
                         event.getId(), event.getEventType(), event.getTopic(), e);
