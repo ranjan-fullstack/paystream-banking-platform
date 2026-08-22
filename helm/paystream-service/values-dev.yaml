@@ -20,6 +20,12 @@ image:
 # actually free instead of being capped against a number that was never
 # achievable for everyone simultaneously anyway. Memory limit stays, for
 # OOM protection.
+#
+# 384Mi was sized for the old 2x t3.medium cluster. On the new 3x t3.large
+# nodegroup, account-service/auth-service/customer-service (Hibernate +
+# Flyway + HikariCP + the OTel javaagent, all loaded at once) were getting
+# OOMKilled at 384Mi even though node memory sat at 31-37% utilization --
+# raised to 768Mi to match the headroom the bigger nodes actually have.
 resources:
   requests:
     cpu: 100m
@@ -30,7 +36,7 @@ resources:
     # explicitly raised. 2 full vCPUs is effectively "don't throttle" given
     # node capacity, while the memory limit still guards against a runaway.
     cpu: "2000m"
-    memory: 384Mi
+    memory: 768Mi
 
 hpa:
   minReplicas: 1
