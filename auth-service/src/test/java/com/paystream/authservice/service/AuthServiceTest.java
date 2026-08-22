@@ -138,7 +138,7 @@ class AuthServiceTest {
         // When & Then
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(RuntimeException.class)
-                .hasMessage("Invalid credentials");
+                .hasMessage("Invalid username or password");
 
         verify(jwtService, never()).generateToken(any());
     }
@@ -154,9 +154,12 @@ class AuthServiceTest {
         when(userRepo.findByUsername("unknown.user")).thenReturn(Optional.empty());
 
         // When & Then
+        // Same generic message as the wrong-password case, deliberately --
+        // AuthService doesn't reveal whether the username or the password
+        // was wrong, to avoid username enumeration.
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(RuntimeException.class)
-                .hasMessage("User not found");
+                .hasMessage("Invalid username or password");
 
         verify(passwordEncoder, never()).matches(any(), any());
     }

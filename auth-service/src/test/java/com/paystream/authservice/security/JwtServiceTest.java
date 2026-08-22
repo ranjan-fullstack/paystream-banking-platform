@@ -20,11 +20,16 @@ class JwtServiceTest {
 
     @BeforeEach
     void setUp() {
+        // test-jwt-keystore.jks is a throwaway keystore generated solely for this
+        // test -- see auth-service/src/test/resources/README.md. Never the real
+        // production keystore (that's loaded from Secrets Manager, not committed
+        // anywhere), and deliberately named/passworded differently so the two
+        // can't be confused.
         jwtService = new JwtService();
-        ReflectionTestUtils.setField(jwtService, "keystoreResource", new ClassPathResource("paystream-jwt.jks"));
-        ReflectionTestUtils.setField(jwtService, "storePassword", "paystream-keystore-password");
+        ReflectionTestUtils.setField(jwtService, "keystoreResource", new ClassPathResource("test-jwt-keystore.jks"));
+        ReflectionTestUtils.setField(jwtService, "storePassword", "test-only-password");
         ReflectionTestUtils.setField(jwtService, "keyAlias", "jwt-signing-key");
-        ReflectionTestUtils.setField(jwtService, "keyPassword", "paystream-keystore-password");
+        ReflectionTestUtils.setField(jwtService, "keyPassword", "test-only-password");
         ReflectionTestUtils.setField(jwtService, "accessTokenExpiration", 3600000L);
         jwtService.loadKeyPair();
 
