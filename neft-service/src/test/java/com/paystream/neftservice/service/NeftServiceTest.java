@@ -2,6 +2,7 @@ package com.paystream.neftservice.service;
 
 import com.paystream.neftservice.client.AccountClient;
 import com.paystream.neftservice.client.dto.AccountValidationResponse;
+import com.paystream.neftservice.client.dto.PaymentRailConfigResponse;
 import com.paystream.neftservice.dto.NeftTransactionResponse;
 import com.paystream.neftservice.dto.NeftTransferRequest;
 import com.paystream.neftservice.entity.NeftTransaction;
@@ -9,6 +10,7 @@ import com.paystream.neftservice.enums.NeftStatus;
 import com.paystream.neftservice.exception.InvalidAccountException;
 import com.paystream.neftservice.exception.NeftTransactionNotFoundException;
 import com.paystream.neftservice.exception.NeftWindowClosedException;
+import com.paystream.neftservice.exception.ServiceUnavailableException;
 import com.paystream.neftservice.repository.NeftBatchRepository;
 import com.paystream.neftservice.repository.NeftTransactionRepository;
 import com.paystream.neftservice.service.impl.NeftServiceImpl;
@@ -67,6 +69,21 @@ class NeftServiceTest {
         return request;
     }
 
+    // validatePaymentRail() runs before window/account checks in
+    // NeftServiceImpl.initiateTransfer(), so every test that calls
+    // initiateTransfer() needs this mocked -- regardless of what that
+    // particular test is actually exercising -- or it NPEs on the
+    // unstubbed config before ever reaching the behavior under test.
+    private PaymentRailConfigResponse buildEnabledConfig() {
+        PaymentRailConfigResponse config = new PaymentRailConfigResponse();
+        config.setEnabled(true);
+        config.setPerTransactionLimit(new BigDecimal("1000000.00"));
+        config.setDailyLimit(new BigDecimal("500000.00"));
+        config.setUsedToday(BigDecimal.ZERO);
+        config.setRemainingToday(new BigDecimal("500000.00"));
+        return config;
+    }
+
     @Test
     @DisplayName("Should initiate a NEFT transfer successfully when the window is open and sender account is valid")
     void testInitiateTransferSuccess() {
@@ -76,6 +93,7 @@ class NeftServiceTest {
         validation.setValid(true);
         validation.setAccountNumber(request.getSenderAccountNumber());
 
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(windowValidator.isWithinWindow(any(LocalDateTime.class))).thenReturn(true);
         when(accountClient.validate(request.getSenderAccountNumber())).thenReturn(validation);
         when(neftTransactionRepository.existsByNeftReferenceNumber(anyString())).thenReturn(false);
@@ -96,6 +114,7 @@ class NeftServiceTest {
     void testInitiateTransfer_OutsideWindow_throwsException() {
         // Given
         NeftTransferRequest request = buildRequest();
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(windowValidator.isWithinWindow(any(LocalDateTime.class))).thenReturn(false);
 
         // When & Then
@@ -133,6 +152,7 @@ class NeftServiceTest {
         validation.setValid(false);
         validation.setReason("Account is FROZEN");
 
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(buildEnabledConfig());
         when(windowValidator.isWithinWindow(any(LocalDateTime.class))).thenReturn(true);
         when(accountClient.validate(request.getSenderAccountNumber())).thenReturn(validation);
 
@@ -141,6 +161,24 @@ class NeftServiceTest {
                 .isInstanceOf(InvalidAccountException.class)
                 .hasMessageContaining("FROZEN");
 
+        verify(neftTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should throw ServiceUnavailableException when account-service returns an empty payment rail config")
+    void testInitiateTransfer_PaymentRailConfigNull_throwsException() {
+        // Given -- a successful Feign call that comes back empty is a distinct
+        // failure mode from the circuit breaker (which handles account-service
+        // being unreachable entirely, not a 200 with no usable body).
+        NeftTransferRequest request = buildRequest();
+        when(accountClient.getPaymentConfig(anyString(), anyString())).thenReturn(null);
+
+        // When & Then
+        assertThatThrownBy(() -> neftService.initiateTransfer(request))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining(request.getSenderAccountNumber());
+
+        verify(windowValidator, never()).isWithinWindow(any());
         verify(neftTransactionRepository, never()).save(any());
     }
 

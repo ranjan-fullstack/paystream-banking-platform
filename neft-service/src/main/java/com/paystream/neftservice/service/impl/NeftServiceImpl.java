@@ -15,6 +15,7 @@ import com.paystream.neftservice.exception.NeftTransactionNotFoundException;
 import com.paystream.neftservice.exception.NeftWindowClosedException;
 import com.paystream.neftservice.exception.PaymentRailNotEnabledException;
 import com.paystream.neftservice.exception.PerTransactionLimitExceededException;
+import com.paystream.neftservice.exception.ServiceUnavailableException;
 import com.paystream.neftservice.repository.NeftBatchRepository;
 import com.paystream.neftservice.repository.NeftTransactionRepository;
 import com.paystream.neftservice.service.NeftService;
@@ -142,6 +143,14 @@ public class NeftServiceImpl implements NeftService {
     private void validatePaymentRail(String senderAccountNumber, BigDecimal amount) {
         PaymentRailConfigResponse config = accountClient.getPaymentConfig(senderAccountNumber, "NEFT");
 
+        // Distinct from the circuit-breaker fallback (which covers account-service
+        // being unreachable): this is a successful call that came back empty --
+        // an account-service bug, not a network/availability problem -- but still
+        // something the caller needs a diagnosable error for, not a bare NPE.
+        if (config == null) {
+            throw new ServiceUnavailableException(
+                    "Unable to verify NEFT payment rail configuration for account " + senderAccountNumber);
+        }
         if (!config.isEnabled()) {
             throw new PaymentRailNotEnabledException(
                     "NEFT transfers are not enabled for account " + senderAccountNumber + ". Please contact your branch.");
