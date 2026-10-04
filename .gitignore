@@ -40,3 +40,8 @@ crash.*.log
 tfplan
 *.tfplan
 *.pem
+
+# local runbooks / secrets
+RECREATE_TONIGHT.md
+*.pem
+tfplan

@@ -98,7 +98,7 @@ jobs:
 # JOB 3 — Build & Push Docker images to ECR (one job per PayStream service)
 # Only runs on push to main (not PRs). Matrix strategy builds all 14
 # deployable services in parallel, each pushed to its own ECR repo
-# (provisioned in infrastructure/ecr.tf).
+# (one ECR repo per service, created ahead of time with the AWS CLI).
 # Uses OIDC — no AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY stored in GitHub
 # ──────────────────────────────────────────────────────────────────────────────
   docker-push:

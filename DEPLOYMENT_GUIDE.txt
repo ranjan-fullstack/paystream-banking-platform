@@ -92,7 +92,7 @@ PREREQUISITES
   `terraform apply` with renamed project_name/eks_cluster_name/backend
   values — EKS cluster names can't be renamed in place, so that would
   destroy and recreate your live cluster. The ECR repos added for the 14
-  PayStream services (infrastructure/ecr.tf) are purely additive and safe
+  PayStream services (infrastructure-legacy/ecr.tf) are purely additive and safe
   to apply on top of existing infra.
 
 ================================================================================
@@ -148,7 +148,7 @@ PHASE 1 — TERRAFORM (Create All AWS Infrastructure)
 
   --- Step 1.5: Run Terraform ---
 
-    cd backend/infrastructure
+    cd infrastructure-legacy
 
     terraform init
     terraform plan        ← review what will be created
@@ -160,7 +160,7 @@ PHASE 1 — TERRAFORM (Create All AWS Infrastructure)
       ✅ EC2 instance (Jenkins server) with auto-bootstrap script
       ✅ Elastic IP for Jenkins
       ✅ EKS cluster (paystream-cluster) + worker nodes
-      ✅ ECR repositories — product-service PLUS one per PayStream service
+      ✅ ECR repositories — one per PayStream service
          (config-server, discovery-server, api-gateway, auth-service,
           customer-service, account-service, neft-service, rtgs-service,
           imps-service, upi-service, transaction-service,
@@ -174,7 +174,6 @@ PHASE 1 — TERRAFORM (Create All AWS Infrastructure)
     SAVE THESE VALUES — needed in later steps:
       jenkins_public_ip            = "XX.XX.XX.XX"
       eks_cluster_name             = "paystream-cluster"
-      ecr_repository_url           = "123456789.dkr.ecr.ap-south-1.amazonaws.com/product-service"
       paystream_ecr_repository_urls = { account-service = "...", neft-service = "...", ... }
       kubeconfig_command            = "aws eks update-kubeconfig ..."
 
@@ -711,9 +710,8 @@ PHASE 9 — AWS SECRETS MANAGER
       "aws_secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     }'
 
-  No External Secret K8s manifest ships yet for any PayStream service
-  (k8s/product-service/external-secret.yaml was specific to the removed
-  product-service). Once you've created the AWS secrets above, add an
+  No External Secret K8s manifest ships yet for any PayStream service.
+  Once you've created the AWS secrets above, add an
   ExternalSecret resource per service referencing paystream/<service> and
   targeting the same namespace as that service's Helm release.
 
@@ -957,12 +955,12 @@ FILE STRUCTURE REFERENCE
   ├── mysql-init/                         ← creates 3 PayStream MySQL DBs on first boot
   ├── config-repo/                        ← Spring Cloud Config — one yml per service
   ├── docs/asyncapi.yml                   ← Kafka topic catalog (AsyncAPI spec)
-  ├── infrastructure/                     ← Terraform (all AWS infra)
+  ├── infrastructure-legacy/              ← earlier Terraform layout (reference only)
   │   ├── backend.tf                      ← S3 state + provider
   │   ├── vpc.tf                          ← VPC + subnets + NAT
   │   ├── security-groups.tf              ← firewall rules
   │   ├── ec2.tf                          ← Jenkins server
-  │   ├── ecr.tf                          ← product-service repo + 14 PayStream repos
+  │   ├── ecr.tf                          ← 14 PayStream ECR repos
   │   ├── eks.tf                          ← Kubernetes cluster
   │   ├── iam.tf                          ← all IAM roles
   │   ├── variables.tf                    ← configurable values

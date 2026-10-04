@@ -137,10 +137,10 @@ an empty data directory.
 
 ## Building & Deploying
 
-See [DEPLOYMENT_GUIDE.txt](DEPLOYMENT_GUIDE.txt) for the full Terraform →
+See [DEPLOYMENT_GUIDE.txt](DEPLOYMENT_GUIDE.txt) for the full
 Jenkins/GitHub Actions → ArgoCD → EKS pipeline walkthrough.
 
-- **Infra**: `infrastructure/` (Terraform) — EKS, ECR (one repo per service), Jenkins EC2.
+- **Infra**: the EKS cluster (`paystream-eks`, ap-south-1) is created with `eksctl`; ECR repos, Secrets Manager secrets and IRSA roles are managed with the AWS CLI. `infrastructure-legacy/` keeps an earlier Terraform layout (VPC, EKS, ECR, Jenkins EC2) for reference — it is not what the current cluster was built from.
 - **CI**: `Jenkinsfile` and `.github/workflows/ci.yml` — build the full reactor once, then build/scan/push each of the 14 deployable services to its own ECR repo.
 - **CD**: `helm/paystream-service/` — one generic Helm chart parameterized per service (`values/<service>.yaml`) and per environment (`values-{dev,staging,prod}.yaml`). `k8s/argocd/*.yaml` are ArgoCD `ApplicationSet`s that generate one `Application` per service per environment from that same chart.
 
